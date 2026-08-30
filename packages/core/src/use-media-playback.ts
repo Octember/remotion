@@ -175,49 +175,6 @@ export const useMediaPlayback = ({
 	})();
 
 	const isPlayerBuffering = useIsPlayerBuffering(buffering);
-	useEffect(() => {
-		const pauseMedia = (reason: 'not-playing' | 'buffering') => {
-			playbackLogging({
-				logLevel,
-				tag: 'pause',
-				message: `Pausing ${mediaRef.current?.src} because ${getPauseReason({
-					reason,
-					isPremounting,
-					isPostmounting,
-				})}`,
-				mountTime,
-			});
-			mediaRef.current?.pause();
-		};
-
-		if (mediaRef.current?.paused) {
-			return;
-		}
-
-		if (!playing) {
-			pauseMedia('not-playing');
-			return;
-		}
-
-		const isMediaTagBufferingOrStalled = isMediaTagBuffering || isBuffering();
-
-		const playerBufferingNotStateButLive = buffering.buffering.current;
-		if (playerBufferingNotStateButLive && !isMediaTagBufferingOrStalled) {
-			pauseMedia('buffering');
-		}
-	}, [
-		isBuffering,
-		isMediaTagBuffering,
-		buffering,
-		isPlayerBuffering,
-		isPremounting,
-		logLevel,
-		mediaRef,
-		mediaType,
-		mountTime,
-		playing,
-		isPostmounting,
-	]);
 
 	const env = useRemotionEnvironment();
 
@@ -250,6 +207,32 @@ export const useMediaPlayback = ({
 		}
 
 		const {current} = mediaRef;
+		const pauseMedia = (reason: 'not-playing' | 'buffering') => {
+			playbackLogging({
+				logLevel,
+				tag: 'pause',
+				message: `Pausing ${current.src} because ${getPauseReason({
+					reason,
+					isPremounting,
+					isPostmounting,
+				})}`,
+				mountTime,
+			});
+			current.pause();
+		};
+
+		if (!current.paused) {
+			if (!playing) {
+				pauseMedia('not-playing');
+			} else {
+				const isMediaTagBufferingOrStalled =
+					isMediaTagBuffering || isBuffering();
+				const playerBufferingNotStateButLive = buffering.buffering.current;
+				if (playerBufferingNotStateButLive && !isMediaTagBufferingOrStalled) {
+					pauseMedia('buffering');
+				}
+			}
+		}
 
 		const action = getMediaSyncAction({
 			duration: current.duration,
@@ -359,6 +342,7 @@ export const useMediaPlayback = ({
 		desiredUnclampedTime,
 		isBuffering,
 		isMediaTagBuffering,
+		isPlayerBuffering,
 		mediaRef,
 		mediaType,
 		onlyWarnForMediaSeekingError,
