@@ -41,3 +41,24 @@ test('does not publish unchanged playback state', () => {
 		buffering: true,
 	});
 });
+
+test('does not notify listeners added during a dispatch', () => {
+	const controller = createRuntimeValueStore({
+		playing: false,
+		buffering: false,
+	});
+	const calls: string[] = [];
+
+	controller.store.subscribe(() => {
+		calls.push('first');
+		controller.store.subscribe(() => {
+			calls.push('second');
+		});
+	});
+
+	controller.setSnapshot({playing: false, buffering: true});
+	expect(calls).toEqual(['first']);
+
+	controller.setSnapshot({playing: false, buffering: false});
+	expect(calls).toEqual(['first', 'first', 'second']);
+});

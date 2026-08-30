@@ -43,7 +43,7 @@ export const createRuntimeValueStore = <TSnapshot extends RuntimeValueSnapshot>(
 
 			const previousSnapshot = snapshot;
 			snapshot = newSnapshot;
-			for (const listener of listeners) {
+			for (const listener of [...listeners]) {
 				listener(snapshot, previousSnapshot);
 			}
 		},
