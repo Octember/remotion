@@ -4,6 +4,7 @@ import React, {useContext, useLayoutEffect} from 'react';
 import {BufferingContextReact, BufferingProvider} from '../buffering.js';
 import type {RemotionEnvironment} from '../remotion-environment-context.js';
 import {RemotionEnvironmentContext} from '../remotion-environment-context.js';
+import {SetTimelineContext} from '../TimelineContext.js';
 
 const previewEnvironment: RemotionEnvironment = {
 	isStudio: false,
@@ -15,6 +16,7 @@ const previewEnvironment: RemotionEnvironment = {
 
 let manager: React.ContextType<typeof BufferingContextReact> = null;
 let events: string[] = [];
+let publishedBuffering: boolean[] = [];
 
 const Harness: React.FC = () => {
 	const context = useContext(BufferingContextReact);
@@ -42,9 +44,20 @@ const Harness: React.FC = () => {
 const renderProvider = () => {
 	return render(
 		<RemotionEnvironmentContext.Provider value={previewEnvironment}>
-			<BufferingProvider>
-				<Harness />
-			</BufferingProvider>
+			<SetTimelineContext.Provider
+				value={{
+					setFrame: () => undefined,
+					setPlaying: () => undefined,
+					setBuffering: (buffering) => publishedBuffering.push(buffering),
+					subscribePlaying: () => () => undefined,
+					frameRef: {current: {}},
+					audioAndVideoTags: {current: []},
+				}}
+			>
+				<BufferingProvider>
+					<Harness />
+				</BufferingProvider>
+			</SetTimelineContext.Provider>
 		</RemotionEnvironmentContext.Provider>,
 	);
 };
@@ -52,6 +65,7 @@ const renderProvider = () => {
 beforeEach(() => {
 	manager = null;
 	events = [];
+	publishedBuffering = [];
 });
 
 test('does not emit "resume" on mount', () => {
@@ -71,6 +85,7 @@ test('emits "waiting" and "resume" only on empty <-> non-empty transitions', () 
 	});
 	expect(events).toEqual(['waiting']);
 	expect(manager!.buffering.current).toBe(true);
+	expect(publishedBuffering).toEqual([true]);
 
 	// A second block while already buffering must not re-dispatch "waiting"
 	act(() => {
@@ -90,6 +105,7 @@ test('emits "waiting" and "resume" only on empty <-> non-empty transitions', () 
 	});
 	expect(events).toEqual(['waiting', 'resume']);
 	expect(manager!.buffering.current).toBe(false);
+	expect(publishedBuffering).toEqual([true, false]);
 });
 
 test('a block added and removed within the same commit emits no events', () => {

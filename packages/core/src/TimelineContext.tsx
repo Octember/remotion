@@ -28,6 +28,7 @@ export type PlaybackRateContextValue = {
 export type SetTimelineContextValue = {
 	setFrame: (u: React.SetStateAction<Record<string, number>>) => void;
 	setPlaying: (u: React.SetStateAction<boolean>) => void;
+	setBuffering: (buffering: boolean) => void;
 	subscribePlaying: (
 		listener: (state: Readonly<{playing: boolean}>) => void,
 	) => () => void;
@@ -42,6 +43,7 @@ export const SetTimelineContext = createContext<SetTimelineContextValue>({
 	setPlaying: () => {
 		throw new Error('default');
 	},
+	setBuffering: () => undefined,
 	subscribePlaying: () => () => undefined,
 	frameRef: {current: {}},
 	audioAndVideoTags: {current: []},
@@ -60,9 +62,21 @@ export const TimelineContextProvider: React.FC<{
 	readonly children: React.ReactNode;
 	readonly frameState: Record<string, number> | null;
 }> = ({children, frameState}) => {
-	const playingStore = useMemo(
-		() => createRuntimeValueStore({playing: false}),
+	const playbackStore = useMemo(
+		() => createRuntimeValueStore({playing: false, buffering: false}),
 		[],
+	);
+	const subscribePlaying = useCallback(
+		(listener: (state: Readonly<{playing: boolean}>) => void) => {
+			let previous = playbackStore.store.getSnapshot().playing;
+			return playbackStore.store.subscribe((snapshot) => {
+				if (snapshot.playing !== previous) {
+					previous = snapshot.playing;
+					listener({playing: snapshot.playing});
+				}
+			});
+		},
+		[playbackStore],
 	);
 
 	const [playbackRate, setPlaybackRate] = useState(1);
@@ -76,8 +90,8 @@ export const TimelineContextProvider: React.FC<{
 	frameRef.current = frame;
 
 	const readIsPlaying = useCallback(
-		() => playingStore.store.getSnapshot().playing,
-		[playingStore],
+		() => playbackStore.store.getSnapshot().playing,
+		[playbackStore],
 	);
 
 	const {delayRender, continueRender} = useDelayRender();
@@ -136,18 +150,25 @@ export const TimelineContextProvider: React.FC<{
 		return {
 			setFrame,
 			setPlaying: (updater) => {
-				const current = playingStore.store.getSnapshot().playing;
+				const snapshot = playbackStore.store.getSnapshot();
+				const current = snapshot.playing;
 				const next = typeof updater === 'function' ? updater(current) : updater;
 
 				if (current !== next) {
-					playingStore.setSnapshot({playing: next});
+					playbackStore.setSnapshot({...snapshot, playing: next});
 				}
 			},
-			subscribePlaying: playingStore.store.subscribe,
+			setBuffering: (buffering) => {
+				const snapshot = playbackStore.store.getSnapshot();
+				if (snapshot.buffering !== buffering) {
+					playbackStore.setSnapshot({...snapshot, buffering});
+				}
+			},
+			subscribePlaying,
 			frameRef,
 			audioAndVideoTags,
 		};
-	}, [playingStore]);
+	}, [playbackStore, subscribePlaying]);
 
 	return (
 		<AbsoluteTimeContext.Provider value={timelineContextValue}>

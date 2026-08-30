@@ -73,6 +73,7 @@ const mockPlaybackRateContext: PlaybackRateContextValue = {
 const mockSetTimelineContext: SetTimelineContextValue = {
 	setFrame: () => undefined,
 	setPlaying: () => undefined,
+	setBuffering: () => undefined,
 	subscribePlaying: () => () => undefined,
 	frameRef: {current: {}},
 	audioAndVideoTags: {current: []},

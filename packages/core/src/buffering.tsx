@@ -11,6 +11,7 @@ import React, {
 import type {LogLevel} from './log';
 import {LogLevelContext} from './log-level-context';
 import {playbackLogging} from './playback-logging';
+import {SetTimelineContext} from './TimelineContext.js';
 import {useRemotionEnvironment} from './use-remotion-environment';
 
 type Block = {
@@ -42,6 +43,7 @@ type BufferManager = {
 const useBufferManager = (
 	logLevel: LogLevel,
 	mountTime: number | null,
+	setBuffering: (buffering: boolean) => void,
 ): BufferManager => {
 	const [blocks, setBlocks] = useState<Block[]>([]);
 	// Listener registries are refs, not state: `usePlayback` parks its loop
@@ -133,6 +135,7 @@ const useBufferManager = (
 		// not re-dispatch `waiting` to listeners.
 		if (blocks.length > 0 && !buffering.current) {
 			buffering.current = true;
+			setBuffering(true);
 			[...onBufferingCallbacks.current].forEach((c) => c());
 			playbackLogging({
 				logLevel,
@@ -161,6 +164,7 @@ const useBufferManager = (
 			// dispatch `resume` to listeners.
 			if (blocks.length === 0 && buffering.current) {
 				buffering.current = false;
+				setBuffering(false);
 				[...onResumeCallbacks.current].forEach((c) => c());
 				playbackLogging({
 					logLevel,
@@ -189,7 +193,12 @@ export const BufferingProvider: React.FC<{
 	readonly children: React.ReactNode;
 }> = ({children}) => {
 	const {logLevel, mountTime} = useContext(LogLevelContext);
-	const bufferManager = useBufferManager(logLevel ?? 'info', mountTime);
+	const {setBuffering} = useContext(SetTimelineContext);
+	const bufferManager = useBufferManager(
+		logLevel ?? 'info',
+		mountTime,
+		setBuffering,
+	);
 
 	return (
 		<BufferingContextReact.Provider value={bufferManager}>
