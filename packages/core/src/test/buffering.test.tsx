@@ -50,6 +50,8 @@ const renderProvider = () => {
 					setPlaying: () => undefined,
 					setBuffering: (buffering) => publishedBuffering.push(buffering),
 					subscribePlaying: () => () => undefined,
+					subscribePlayback: () => () => undefined,
+					isBuffering: () => false,
 					frameRef: {current: {}},
 					audioAndVideoTags: {current: []},
 				}}

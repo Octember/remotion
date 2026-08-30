@@ -267,6 +267,10 @@ const PlayerFn = <
 		() => playbackStore.store.getSnapshot().playing,
 		[playbackStore],
 	);
+	const readIsBuffering = useCallback(
+		() => playbackStore.store.getSnapshot().buffering,
+		[playbackStore],
+	);
 	const [currentPlaybackRate, setCurrentPlaybackRate] = useState(playbackRate);
 
 	if (typeof compositionHeight !== 'number') {
@@ -462,10 +466,12 @@ const PlayerFn = <
 				}
 			},
 			subscribePlaying,
+			subscribePlayback: playbackStore.store.subscribe,
+			isBuffering: readIsBuffering,
 			frameRef,
 			audioAndVideoTags,
 		};
-	}, [playbackStore, setFrame, frameRef, subscribePlaying]);
+	}, [playbackStore, setFrame, frameRef, readIsBuffering, subscribePlaying]);
 
 	if (typeof window !== 'undefined') {
 		// eslint-disable-next-line react-hooks/rules-of-hooks

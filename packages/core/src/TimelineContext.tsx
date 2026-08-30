@@ -25,6 +25,11 @@ export type PlaybackRateContextValue = {
 	setPlaybackRate: (u: React.SetStateAction<number>) => void;
 };
 
+export type PlaybackState = Readonly<{
+	playing: boolean;
+	buffering: boolean;
+}>;
+
 export type SetTimelineContextValue = {
 	setFrame: (u: React.SetStateAction<Record<string, number>>) => void;
 	setPlaying: (u: React.SetStateAction<boolean>) => void;
@@ -32,6 +37,8 @@ export type SetTimelineContextValue = {
 	subscribePlaying: (
 		listener: (state: Readonly<{playing: boolean}>) => void,
 	) => () => void;
+	subscribePlayback: (listener: (state: PlaybackState) => void) => () => void;
+	isBuffering: () => boolean;
 	frameRef: RefObject<Record<string, number>>;
 	audioAndVideoTags: RefObject<PlayableMediaTag[]>;
 };
@@ -45,6 +52,8 @@ export const SetTimelineContext = createContext<SetTimelineContextValue>({
 	},
 	setBuffering: () => undefined,
 	subscribePlaying: () => () => undefined,
+	subscribePlayback: () => () => undefined,
+	isBuffering: () => false,
 	frameRef: {current: {}},
 	audioAndVideoTags: {current: []},
 });
@@ -91,6 +100,10 @@ export const TimelineContextProvider: React.FC<{
 
 	const readIsPlaying = useCallback(
 		() => playbackStore.store.getSnapshot().playing,
+		[playbackStore],
+	);
+	const readIsBuffering = useCallback(
+		() => playbackStore.store.getSnapshot().buffering,
 		[playbackStore],
 	);
 
@@ -165,10 +178,12 @@ export const TimelineContextProvider: React.FC<{
 				}
 			},
 			subscribePlaying,
+			subscribePlayback: playbackStore.store.subscribe,
+			isBuffering: readIsBuffering,
 			frameRef,
 			audioAndVideoTags,
 		};
-	}, [playbackStore, subscribePlaying]);
+	}, [playbackStore, readIsBuffering, subscribePlaying]);
 
 	return (
 		<AbsoluteTimeContext.Provider value={timelineContextValue}>

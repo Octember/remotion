@@ -1,14 +1,7 @@
 import type {RefObject} from 'react';
-import {
-	useCallback,
-	useContext,
-	useEffect,
-	useLayoutEffect,
-	useRef,
-} from 'react';
+import {useCallback, useEffect, useLayoutEffect, useRef} from 'react';
 import {useMediaStartsAt} from './audio/use-audio-frame.js';
 import {useBufferUntilFirstFrame} from './buffer-until-first-frame.js';
-import {BufferingContextReact, useIsPlayerBuffering} from './buffering.js';
 import {getMediaSyncAction} from './get-media-sync-action.js';
 import {useLogLevel, useMountTime} from './log-level-context.js';
 import {Log} from './log.js';
@@ -21,6 +14,7 @@ import {
 	usePlaybackRate,
 	useTimelinePosition,
 } from './timeline-position-state.js';
+import {useBuffering} from './use-buffering.js';
 import {useCurrentFrame} from './use-current-frame.js';
 import {useMediaBuffering} from './use-media-buffering.js';
 import {useRemotionEnvironment} from './use-remotion-environment.js';
@@ -89,19 +83,13 @@ export const useMediaPlayback = ({
 	const frame = useCurrentFrame();
 	const absoluteFrame = useTimelinePosition();
 	const playing = usePlaying();
-	const buffering = useContext(BufferingContextReact);
+	const playerBuffering = useBuffering();
 	const {fps} = useVideoConfig();
 	const mediaStartsAt = useMediaStartsAt();
 	const lastSeekDueToShift = useRef<number | null>(null);
 	const lastSeek = useRef<number | null>(null);
 	const logLevel = useLogLevel();
 	const mountTime = useMountTime();
-
-	if (!buffering) {
-		throw new Error(
-			'useMediaPlayback must be used inside a <BufferingContext>',
-		);
-	}
 
 	const isVariableFpsVideoMap = useRef<Record<string, boolean>>({});
 
@@ -173,8 +161,6 @@ export const useMediaPlayback = ({
 			acceptableTimeshift ?? DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_AMPLIFICATION
 		);
 	})();
-
-	const playerBuffering = useIsPlayerBuffering(buffering);
 
 	const env = useRemotionEnvironment();
 

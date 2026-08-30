@@ -6,7 +6,6 @@ import React, {
 	useMemo,
 	useRef,
 	useState,
-	useSyncExternalStore,
 } from 'react';
 import type {LogLevel} from './log';
 import {LogLevelContext} from './log-level-context';
@@ -205,25 +204,4 @@ export const BufferingProvider: React.FC<{
 			{children}
 		</BufferingContextReact.Provider>
 	);
-};
-
-export const useIsPlayerBuffering = (bufferManager: BufferManager) => {
-	const subscribe = useCallback(
-		(onChange: () => void) => {
-			const buffer = bufferManager.listenForBuffering(onChange);
-			const resume = bufferManager.listenForResume(onChange);
-
-			return () => {
-				buffer.remove();
-				resume.remove();
-			};
-		},
-		[bufferManager],
-	);
-	const getSnapshot = useCallback(
-		() => bufferManager.buffering.current,
-		[bufferManager],
-	);
-
-	return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 };
