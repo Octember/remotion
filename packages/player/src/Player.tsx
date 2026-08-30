@@ -251,18 +251,6 @@ const PlayerFn = <
 		() => Internals.createRuntimeValueStore({playing: false, buffering: false}),
 		[],
 	);
-	const subscribePlaying = useCallback(
-		(listener: (state: Readonly<{playing: boolean}>) => void) => {
-			let previous = playbackStore.store.getSnapshot().playing;
-			return playbackStore.store.subscribe((snapshot) => {
-				if (snapshot.playing !== previous) {
-					previous = snapshot.playing;
-					listener({playing: snapshot.playing});
-				}
-			});
-		},
-		[playbackStore],
-	);
 	const readIsPlaying = useCallback(
 		() => playbackStore.store.getSnapshot().playing,
 		[playbackStore],
@@ -465,13 +453,12 @@ const PlayerFn = <
 					playbackStore.setSnapshot({...snapshot, buffering});
 				}
 			},
-			subscribePlaying,
 			subscribePlayback: playbackStore.store.subscribe,
 			isBuffering: readIsBuffering,
 			frameRef,
 			audioAndVideoTags,
 		};
-	}, [playbackStore, setFrame, frameRef, readIsBuffering, subscribePlaying]);
+	}, [playbackStore, setFrame, frameRef, readIsBuffering]);
 
 	if (typeof window !== 'undefined') {
 		// eslint-disable-next-line react-hooks/rules-of-hooks

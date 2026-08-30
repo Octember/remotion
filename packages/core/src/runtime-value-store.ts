@@ -4,7 +4,9 @@ export type RuntimeValueStore<
 	TSnapshot extends RuntimeValueSnapshot = RuntimeValueSnapshot,
 > = {
 	getSnapshot: () => TSnapshot;
-	subscribe: (listener: (snapshot: TSnapshot) => void) => () => void;
+	subscribe: (
+		listener: (snapshot: TSnapshot, previousSnapshot: TSnapshot) => void,
+	) => () => void;
 };
 
 export type RuntimeValueStoreController<
@@ -18,7 +20,9 @@ export const createRuntimeValueStore = <TSnapshot extends RuntimeValueSnapshot>(
 	initialSnapshot: TSnapshot,
 ): RuntimeValueStoreController<TSnapshot> => {
 	let snapshot = initialSnapshot;
-	const listeners = new Set<(snapshot: TSnapshot) => void>();
+	const listeners = new Set<
+		(snapshot: TSnapshot, previousSnapshot: TSnapshot) => void
+	>();
 
 	const store: RuntimeValueStore<TSnapshot> = {
 		getSnapshot: () => snapshot,
@@ -37,9 +41,10 @@ export const createRuntimeValueStore = <TSnapshot extends RuntimeValueSnapshot>(
 				return;
 			}
 
+			const previousSnapshot = snapshot;
 			snapshot = newSnapshot;
 			for (const listener of listeners) {
-				listener(snapshot);
+				listener(snapshot, previousSnapshot);
 			}
 		},
 	};

@@ -34,10 +34,9 @@ export type SetTimelineContextValue = {
 	setFrame: (u: React.SetStateAction<Record<string, number>>) => void;
 	setPlaying: (u: React.SetStateAction<boolean>) => void;
 	setBuffering: (buffering: boolean) => void;
-	subscribePlaying: (
-		listener: (state: Readonly<{playing: boolean}>) => void,
+	subscribePlayback: (
+		listener: (state: PlaybackState, previousState: PlaybackState) => void,
 	) => () => void;
-	subscribePlayback: (listener: (state: PlaybackState) => void) => () => void;
 	isBuffering: () => boolean;
 	frameRef: RefObject<Record<string, number>>;
 	audioAndVideoTags: RefObject<PlayableMediaTag[]>;
@@ -51,7 +50,6 @@ export const SetTimelineContext = createContext<SetTimelineContextValue>({
 		throw new Error('default');
 	},
 	setBuffering: () => undefined,
-	subscribePlaying: () => () => undefined,
 	subscribePlayback: () => () => undefined,
 	isBuffering: () => false,
 	frameRef: {current: {}},
@@ -74,18 +72,6 @@ export const TimelineContextProvider: React.FC<{
 	const playbackStore = useMemo(
 		() => createRuntimeValueStore({playing: false, buffering: false}),
 		[],
-	);
-	const subscribePlaying = useCallback(
-		(listener: (state: Readonly<{playing: boolean}>) => void) => {
-			let previous = playbackStore.store.getSnapshot().playing;
-			return playbackStore.store.subscribe((snapshot) => {
-				if (snapshot.playing !== previous) {
-					previous = snapshot.playing;
-					listener({playing: snapshot.playing});
-				}
-			});
-		},
-		[playbackStore],
 	);
 
 	const [playbackRate, setPlaybackRate] = useState(1);
@@ -177,13 +163,12 @@ export const TimelineContextProvider: React.FC<{
 					playbackStore.setSnapshot({...snapshot, buffering});
 				}
 			},
-			subscribePlaying,
 			subscribePlayback: playbackStore.store.subscribe,
 			isBuffering: readIsBuffering,
 			frameRef,
 			audioAndVideoTags,
 		};
-	}, [playbackStore, readIsBuffering, subscribePlaying]);
+	}, [playbackStore, readIsBuffering]);
 
 	return (
 		<AbsoluteTimeContext.Provider value={timelineContextValue}>
