@@ -29,6 +29,37 @@ import {useVideoConfig} from './use-video-config.js';
 import {getMediaTime} from './video/get-current-time.js';
 import {warnAboutNonSeekableMedia} from './warn-about-non-seekable-media.js';
 
+// In Safari, it seems to lag behind mostly around ~0.4 seconds
+const DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_NORMAL_PLAYBACK = 0.45;
+
+// If there is amplification, the acceptable timeshift is higher
+const DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_AMPLIFICATION =
+	DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_NORMAL_PLAYBACK + 0.2;
+
+const getPauseReason = ({
+	reason,
+	isPremounting,
+	isPostmounting,
+}: {
+	reason: 'not-playing' | 'buffering';
+	isPremounting: boolean;
+	isPostmounting: boolean;
+}) => {
+	if (reason === 'buffering') {
+		return 'player is buffering but media tag is not';
+	}
+
+	if (isPremounting) {
+		return 'media is premounting';
+	}
+
+	if (isPostmounting) {
+		return 'media is postmounting';
+	}
+
+	return 'Player is not playing';
+};
+
 export const useMediaPlayback = ({
 	mediaRef,
 	src,
@@ -130,41 +161,41 @@ export const useMediaPlayback = ({
 	const playbackRate = localPlaybackRate * globalPlaybackRate;
 
 	const acceptableTimeShiftButLessThanDuration = (() => {
-		// In Safari, it seems to lag behind mostly around ~0.4 seconds
-		const DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_NORMAL_PLAYBACK = 0.45;
-
-		// If there is amplification, the acceptable timeshift is higher
-		const DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_AMPLIFICATION =
-			DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_NORMAL_PLAYBACK + 0.2;
-
-		const defaultAcceptableTimeshift =
-			DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_AMPLIFICATION;
 		// For short audio, a lower acceptable time shift is used
 		if (mediaRef.current?.duration) {
 			return Math.min(
 				mediaRef.current.duration,
-				acceptableTimeshift ?? defaultAcceptableTimeshift,
+				acceptableTimeshift ?? DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_AMPLIFICATION,
 			);
 		}
 
-		return acceptableTimeshift ?? defaultAcceptableTimeshift;
+		return (
+			acceptableTimeshift ?? DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_AMPLIFICATION
+		);
 	})();
 
 	const isPlayerBuffering = useIsPlayerBuffering(buffering);
-
 	useEffect(() => {
+		const pauseMedia = (reason: 'not-playing' | 'buffering') => {
+			playbackLogging({
+				logLevel,
+				tag: 'pause',
+				message: `Pausing ${mediaRef.current?.src} because ${getPauseReason({
+					reason,
+					isPremounting,
+					isPostmounting,
+				})}`,
+				mountTime,
+			});
+			mediaRef.current?.pause();
+		};
+
 		if (mediaRef.current?.paused) {
 			return;
 		}
 
 		if (!playing) {
-			playbackLogging({
-				logLevel,
-				tag: 'pause',
-				message: `Pausing ${mediaRef.current?.src} because ${isPremounting ? 'media is premounting' : isPostmounting ? 'media is postmounting' : 'Player is not playing'}`,
-				mountTime,
-			});
-			mediaRef.current?.pause();
+			pauseMedia('not-playing');
 			return;
 		}
 
@@ -172,13 +203,7 @@ export const useMediaPlayback = ({
 
 		const playerBufferingNotStateButLive = buffering.buffering.current;
 		if (playerBufferingNotStateButLive && !isMediaTagBufferingOrStalled) {
-			playbackLogging({
-				logLevel,
-				tag: 'pause',
-				message: `Pausing ${mediaRef.current?.src} because player is buffering but media tag is not`,
-				mountTime,
-			});
-			mediaRef.current?.pause();
+			pauseMedia('buffering');
 		}
 	}, [
 		isBuffering,
