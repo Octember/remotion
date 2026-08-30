@@ -1,10 +1,11 @@
 import type {RefObject} from 'react';
-import {useEffect, useRef} from 'react';
+import {useContext, useEffect, useRef} from 'react';
 import {useLogLevel, useMountTime} from './log-level-context.js';
 import {playAndHandleNotAllowedError} from './play-and-handle-not-allowed-error.js';
 import {playbackLogging} from './playback-logging.js';
 import type {PlayableMediaTag} from './timeline-position-state.js';
 import {useTimelineContext} from './timeline-position-state.js';
+import {SetTimelineContext} from './TimelineContext.js';
 import {useRemotionEnvironment} from './use-remotion-environment.js';
 
 export const useMediaTag = ({
@@ -23,6 +24,7 @@ export const useMediaTag = ({
 	isPostmounting: boolean;
 }) => {
 	const {audioAndVideoTags, isPlaying} = useTimelineContext();
+	const {subscribePlaying} = useContext(SetTimelineContext);
 	const isPlayingRef = useRef(isPlaying);
 	isPlayingRef.current = isPlaying;
 	const logLevel = useLogLevel();
@@ -32,15 +34,6 @@ export const useMediaTag = ({
 	useEffect(() => {
 		const tag: PlayableMediaTag = {
 			id,
-			pause: (reason) => {
-				playbackLogging({
-					logLevel,
-					tag: 'pause',
-					message: `Pausing ${mediaRef.current?.src} because ${reason}`,
-					mountTime,
-				});
-				mediaRef.current?.pause();
-			},
 			play: (reason) => {
 				if (!isPlayingRef.current()) {
 					// Don't play if for example in a <Freeze> state.
@@ -63,8 +56,22 @@ export const useMediaTag = ({
 			},
 		};
 		audioAndVideoTags.current.push(tag);
+		const unsubscribe = subscribePlaying(({playing}) => {
+			if (playing) {
+				return;
+			}
+
+			playbackLogging({
+				logLevel,
+				tag: 'pause',
+				message: `Pausing ${mediaRef.current?.src} because Player is not playing`,
+				mountTime,
+			});
+			mediaRef.current?.pause();
+		});
 
 		return () => {
+			unsubscribe();
 			audioAndVideoTags.current = audioAndVideoTags.current.filter(
 				(a) => a.id !== id,
 			);
@@ -80,5 +87,6 @@ export const useMediaTag = ({
 		logLevel,
 		mountTime,
 		env.isPlayer,
+		subscribePlaying,
 	]);
 };
