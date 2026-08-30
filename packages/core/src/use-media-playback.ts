@@ -36,34 +36,28 @@ const DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_NORMAL_PLAYBACK = 0.45;
 const DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_AMPLIFICATION =
 	DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_NORMAL_PLAYBACK + 0.2;
 
-const getReasonToPause = ({
-	playing,
-	playerBuffering,
-	mediaTagBufferingOrStalled,
+const getPauseReason = ({
+	reason,
 	isPremounting,
 	isPostmounting,
 }: {
-	playing: boolean;
-	playerBuffering: boolean;
-	mediaTagBufferingOrStalled: boolean;
+	reason: 'not-playing' | 'buffering';
 	isPremounting: boolean;
 	isPostmounting: boolean;
 }) => {
-	if (!playing) {
-		if (isPremounting) {
-			return 'media is premounting';
-		}
-
-		if (isPostmounting) {
-			return 'media is postmounting';
-		}
-
-		return 'Player is not playing';
+	if (reason === 'buffering') {
+		return 'player is buffering but media tag is not';
 	}
 
-	return playerBuffering && !mediaTagBufferingOrStalled
-		? 'player is buffering but media tag is not'
-		: null;
+	if (isPremounting) {
+		return 'media is premounting';
+	}
+
+	if (isPostmounting) {
+		return 'media is postmounting';
+	}
+
+	return 'Player is not playing';
 };
 
 export const useMediaPlayback = ({
@@ -214,19 +208,22 @@ export const useMediaPlayback = ({
 
 		const {current} = mediaRef;
 		const isMediaTagBufferingOrStalled = isMediaTagBuffering || isBuffering();
-		const pauseReason = getReasonToPause({
-			playing,
-			playerBuffering,
-			mediaTagBufferingOrStalled: isMediaTagBufferingOrStalled,
-			isPremounting,
-			isPostmounting,
-		});
+		let pauseReason: 'not-playing' | 'buffering' | null = null;
+		if (!playing) {
+			pauseReason = 'not-playing';
+		} else if (playerBuffering && !isMediaTagBufferingOrStalled) {
+			pauseReason = 'buffering';
+		}
 
 		if (!current.paused && pauseReason !== null) {
 			playbackLogging({
 				logLevel,
 				tag: 'pause',
-				message: `Pausing ${current.src} because ${pauseReason}`,
+				message: `Pausing ${current.src} because ${getPauseReason({
+					reason: pauseReason,
+					isPremounting,
+					isPostmounting,
+				})}`,
 				mountTime,
 			});
 			current.pause();
