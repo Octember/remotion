@@ -36,6 +36,30 @@ const DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_NORMAL_PLAYBACK = 0.45;
 const DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_AMPLIFICATION =
 	DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_NORMAL_PLAYBACK + 0.2;
 
+const getPauseReason = ({
+	reason,
+	isPremounting,
+	isPostmounting,
+}: {
+	reason: 'not-playing' | 'buffering';
+	isPremounting: boolean;
+	isPostmounting: boolean;
+}) => {
+	if (reason === 'buffering') {
+		return 'player is buffering but media tag is not';
+	}
+
+	if (isPremounting) {
+		return 'media is premounting';
+	}
+
+	if (isPostmounting) {
+		return 'media is postmounting';
+	}
+
+	return 'Player is not playing';
+};
+
 export const useMediaPlayback = ({
 	mediaRef,
 	src,
@@ -153,19 +177,14 @@ export const useMediaPlayback = ({
 	const isPlayerBuffering = useIsPlayerBuffering(buffering);
 	useEffect(() => {
 		const pauseMedia = (reason: 'not-playing' | 'buffering') => {
-			const reasonText =
-				reason === 'buffering'
-					? 'player is buffering but media tag is not'
-					: isPremounting
-						? 'media is premounting'
-						: isPostmounting
-							? 'media is postmounting'
-							: 'Player is not playing';
-
 			playbackLogging({
 				logLevel,
 				tag: 'pause',
-				message: `Pausing ${mediaRef.current?.src} because ${reasonText}`,
+				message: `Pausing ${mediaRef.current?.src} because ${getPauseReason({
+					reason,
+					isPremounting,
+					isPostmounting,
+				})}`,
 				mountTime,
 			});
 			mediaRef.current?.pause();
