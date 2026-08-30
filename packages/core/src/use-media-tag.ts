@@ -2,6 +2,7 @@ import type {RefObject} from 'react';
 import {useEffect, useRef} from 'react';
 import {useLogLevel, useMountTime} from './log-level-context.js';
 import {playAndHandleNotAllowedError} from './play-and-handle-not-allowed-error.js';
+import {playbackLogging} from './playback-logging.js';
 import type {PlayableMediaTag} from './timeline-position-state.js';
 import {useTimelineContext} from './timeline-position-state.js';
 import {useRemotionEnvironment} from './use-remotion-environment.js';
@@ -31,6 +32,15 @@ export const useMediaTag = ({
 	useEffect(() => {
 		const tag: PlayableMediaTag = {
 			id,
+			pause: (reason) => {
+				playbackLogging({
+					logLevel,
+					tag: 'pause',
+					message: `Pausing ${mediaRef.current?.src} because ${reason}`,
+					mountTime,
+				});
+				mediaRef.current?.pause();
+			},
 			play: (reason) => {
 				if (!isPlayingRef.current()) {
 					// Don't play if for example in a <Freeze> state.

@@ -33,6 +33,11 @@ export const usePlayerMethods = (): UsePlayerMethods => {
 	const emitter = useContext(PlayerEventEmitterContext);
 	const playStart = useRef(0);
 	const fallbackFrame = useRef<number | null>(null);
+	const pauseMediaTags = useCallback(() => {
+		audioAndVideoTags.current.forEach((tag) =>
+			tag.pause?.('Player is not playing'),
+		);
+	}, [audioAndVideoTags]);
 
 	if (!emitter) {
 		throw new TypeError('Expected Player event emitter context');
@@ -146,15 +151,17 @@ export const usePlayerMethods = (): UsePlayerMethods => {
 	const pause = useCallback(() => {
 		if (readIsPlaying()) {
 			setPlaying(false);
+			pauseMediaTags();
 
 			emitter.dispatchPause();
 			audioContext?.suspend();
 		}
-	}, [audioContext, emitter, readIsPlaying, setPlaying]);
+	}, [audioContext, emitter, pauseMediaTags, readIsPlaying, setPlaying]);
 
 	const pauseAndReturnToPlayStart = useCallback(() => {
 		if (readIsPlaying()) {
 			setPlaying(false);
+			pauseMediaTags();
 			fallbackFrame.current = playStart.current;
 			if (config) {
 				frameRef.current = {
@@ -172,6 +179,7 @@ export const usePlayerMethods = (): UsePlayerMethods => {
 		config,
 		emitter,
 		frameRef,
+		pauseMediaTags,
 		readIsPlaying,
 		setPlaying,
 		setTimelinePosition,

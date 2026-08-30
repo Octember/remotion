@@ -19,6 +19,7 @@ import {seek} from './seek.js';
 import {
 	usePlaying,
 	usePlaybackRate,
+	useTimelineContext,
 	useTimelinePosition,
 } from './timeline-position-state.js';
 import {useCurrentFrame} from './use-current-frame.js';
@@ -89,6 +90,7 @@ export const useMediaPlayback = ({
 	const frame = useCurrentFrame();
 	const absoluteFrame = useTimelinePosition();
 	const playing = usePlaying();
+	const {isPlaying} = useTimelineContext();
 	const buffering = useContext(BufferingContextReact);
 	const {fps} = useVideoConfig();
 	const mediaStartsAt = useMediaStartsAt();
@@ -194,7 +196,7 @@ export const useMediaPlayback = ({
 			return;
 		}
 
-		if (!playing) {
+		if (!isPlaying()) {
 			pauseMedia('not-playing');
 			return;
 		}
@@ -215,7 +217,7 @@ export const useMediaPlayback = ({
 		mediaRef,
 		mediaType,
 		mountTime,
-		playing,
+		isPlaying,
 		isPostmounting,
 	]);
 

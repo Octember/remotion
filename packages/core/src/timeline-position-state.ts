@@ -12,6 +12,7 @@ import {useVideo} from './use-video.js';
 
 export type PlayableMediaTag = {
 	play: (reason: string) => void;
+	pause?: (reason: string) => void;
 	id: string;
 };
 
