@@ -29,6 +29,13 @@ import {useVideoConfig} from './use-video-config.js';
 import {getMediaTime} from './video/get-current-time.js';
 import {warnAboutNonSeekableMedia} from './warn-about-non-seekable-media.js';
 
+// In Safari, it seems to lag behind mostly around ~0.4 seconds
+const DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_NORMAL_PLAYBACK = 0.45;
+
+// If there is amplification, the acceptable timeshift is higher
+const DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_AMPLIFICATION =
+	DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_NORMAL_PLAYBACK + 0.2;
+
 export const useMediaPlayback = ({
 	mediaRef,
 	src,
@@ -130,13 +137,6 @@ export const useMediaPlayback = ({
 	const playbackRate = localPlaybackRate * globalPlaybackRate;
 
 	const acceptableTimeShiftButLessThanDuration = (() => {
-		// In Safari, it seems to lag behind mostly around ~0.4 seconds
-		const DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_NORMAL_PLAYBACK = 0.45;
-
-		// If there is amplification, the acceptable timeshift is higher
-		const DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_AMPLIFICATION =
-			DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_NORMAL_PLAYBACK + 0.2;
-
 		const defaultAcceptableTimeshift =
 			DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_AMPLIFICATION;
 		// For short audio, a lower acceptable time shift is used
