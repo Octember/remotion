@@ -31,6 +31,9 @@ runs.
 These all use `usePlaying()` and must not create a second `useState` mirror or
 subscribe to Player `play` and `pause` events.
 
+`use-media-playback.ts` keeps its synchronization decision reactive and shares
+the native pause action within that Effect.
+
 ## Imperative readers
 
 - `packages/player/src/use-player-methods.ts` and `PlayerRef.isPlaying()`

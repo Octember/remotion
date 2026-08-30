@@ -151,20 +151,29 @@ export const useMediaPlayback = ({
 	})();
 
 	const isPlayerBuffering = useIsPlayerBuffering(buffering);
-
 	useEffect(() => {
+		const pauseMedia = (reason: string) => {
+			playbackLogging({
+				logLevel,
+				tag: 'pause',
+				message: `Pausing ${mediaRef.current?.src} because ${reason}`,
+				mountTime,
+			});
+			mediaRef.current?.pause();
+		};
+
 		if (mediaRef.current?.paused) {
 			return;
 		}
 
 		if (!playing) {
-			playbackLogging({
-				logLevel,
-				tag: 'pause',
-				message: `Pausing ${mediaRef.current?.src} because ${isPremounting ? 'media is premounting' : isPostmounting ? 'media is postmounting' : 'Player is not playing'}`,
-				mountTime,
-			});
-			mediaRef.current?.pause();
+			pauseMedia(
+				isPremounting
+					? 'media is premounting'
+					: isPostmounting
+						? 'media is postmounting'
+						: 'Player is not playing',
+			);
 			return;
 		}
 
@@ -172,13 +181,7 @@ export const useMediaPlayback = ({
 
 		const playerBufferingNotStateButLive = buffering.buffering.current;
 		if (playerBufferingNotStateButLive && !isMediaTagBufferingOrStalled) {
-			playbackLogging({
-				logLevel,
-				tag: 'pause',
-				message: `Pausing ${mediaRef.current?.src} because player is buffering but media tag is not`,
-				mountTime,
-			});
-			mediaRef.current?.pause();
+			pauseMedia('player is buffering but media tag is not');
 		}
 	}, [
 		isBuffering,
