@@ -219,6 +219,44 @@ const AudioComposition = () => {
 	);
 };
 
+test('Player.pause() pauses mounted HTML5 media synchronously', () => {
+	const originalPlay = HTMLMediaElement.prototype.play;
+	const originalPause = HTMLMediaElement.prototype.pause;
+	const playerRef = createRef<PlayerRef>();
+	let pauseCalls = 0;
+
+	HTMLMediaElement.prototype.play = () => Promise.resolve();
+	HTMLMediaElement.prototype.pause = () => {
+		pauseCalls++;
+	};
+
+	try {
+		render(
+			React.createElement(Player, {
+				ref: playerRef,
+				component: AudioComposition,
+				durationInFrames: 300,
+				compositionWidth: 1920,
+				compositionHeight: 1080,
+				fps: 30,
+			}),
+		);
+
+		act(() => playerRef.current?.play());
+		pauseCalls = 0;
+
+		act(() => {
+			playerRef.current?.pause();
+			expect(pauseCalls).toBe(1);
+		});
+
+		expect(pauseCalls).toBe(1);
+	} finally {
+		HTMLMediaElement.prototype.play = originalPlay;
+		HTMLMediaElement.prototype.pause = originalPause;
+	}
+});
+
 const PlayerWithMuteButton = ({
 	onError,
 	initiallyMuted = false,

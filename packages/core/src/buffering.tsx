@@ -6,6 +6,7 @@ import React, {
 	useMemo,
 	useRef,
 	useState,
+	useSyncExternalStore,
 } from 'react';
 import type {LogLevel} from './log';
 import {LogLevelContext} from './log-level-context';
@@ -198,27 +199,22 @@ export const BufferingProvider: React.FC<{
 };
 
 export const useIsPlayerBuffering = (bufferManager: BufferManager) => {
-	const [isBuffering, setIsBuffering] = useState(
-		bufferManager.buffering.current,
+	const subscribe = useCallback(
+		(onChange: () => void) => {
+			const buffer = bufferManager.listenForBuffering(onChange);
+			const resume = bufferManager.listenForResume(onChange);
+
+			return () => {
+				buffer.remove();
+				resume.remove();
+			};
+		},
+		[bufferManager],
+	);
+	const getSnapshot = useCallback(
+		() => bufferManager.buffering.current,
+		[bufferManager],
 	);
 
-	useEffect(() => {
-		const onBuffer = () => {
-			setIsBuffering(true);
-		};
-
-		const onResume = () => {
-			setIsBuffering(false);
-		};
-
-		const buffer = bufferManager.listenForBuffering(onBuffer);
-		const resume = bufferManager.listenForResume(onResume);
-
-		return () => {
-			buffer.remove();
-			resume.remove();
-		};
-	}, [bufferManager]);
-
-	return isBuffering;
+	return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 };
