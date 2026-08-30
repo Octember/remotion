@@ -137,17 +137,17 @@ export const useMediaPlayback = ({
 	const playbackRate = localPlaybackRate * globalPlaybackRate;
 
 	const acceptableTimeShiftButLessThanDuration = (() => {
-		const defaultAcceptableTimeshift =
-			DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_AMPLIFICATION;
 		// For short audio, a lower acceptable time shift is used
 		if (mediaRef.current?.duration) {
 			return Math.min(
 				mediaRef.current.duration,
-				acceptableTimeshift ?? defaultAcceptableTimeshift,
+				acceptableTimeshift ?? DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_AMPLIFICATION,
 			);
 		}
 
-		return acceptableTimeshift ?? defaultAcceptableTimeshift;
+		return (
+			acceptableTimeshift ?? DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_AMPLIFICATION
+		);
 	})();
 
 	const isPlayerBuffering = useIsPlayerBuffering(buffering);
