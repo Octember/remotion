@@ -1,5 +1,6 @@
 import {expect, test} from 'bun:test';
 import {createRuntimeValueStore} from '../runtime-value-store.js';
+import {updatePlaybackState} from '../TimelineContext.js';
 
 test('publishes the current and previous snapshots', () => {
 	const controller = createRuntimeValueStore({
@@ -19,4 +20,24 @@ test('publishes the current and previous snapshots', () => {
 			previous: {playing: false, buffering: false},
 		},
 	]);
+});
+
+test('does not publish unchanged playback state', () => {
+	const controller = createRuntimeValueStore({
+		playing: false,
+		buffering: false,
+	});
+	let notifications = 0;
+	controller.store.subscribe(() => {
+		notifications++;
+	});
+
+	updatePlaybackState(controller, {playing: false});
+	updatePlaybackState(controller, {buffering: true});
+
+	expect(notifications).toBe(1);
+	expect(controller.store.getSnapshot()).toEqual({
+		playing: false,
+		buffering: true,
+	});
 });

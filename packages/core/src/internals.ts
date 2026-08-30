@@ -198,6 +198,7 @@ import {
 	useTimelineContext,
 	useTimelineSetFrame,
 } from './timeline-position-state.js';
+import {updatePlaybackState} from './TimelineContext.js';
 import {
 	AbsoluteTimeContext,
 	PlaybackRateContext,
@@ -307,6 +308,7 @@ export const Internals = {
 	makeRenderResourceManager,
 	RenderResourceManagerContext,
 	createRuntimeValueStore,
+	updatePlaybackState,
 	useUnsafeVideoConfig,
 	useFrameForVolumeProp,
 	useTimelinePosition: TimelinePosition.useTimelinePosition,

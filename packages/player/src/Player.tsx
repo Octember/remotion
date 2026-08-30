@@ -439,19 +439,12 @@ const PlayerFn = <
 		return {
 			setFrame,
 			setPlaying: (updater) => {
-				const snapshot = playbackStore.store.getSnapshot();
-				const current = snapshot.playing;
+				const current = playbackStore.store.getSnapshot().playing;
 				const next = typeof updater === 'function' ? updater(current) : updater;
-
-				if (current !== next) {
-					playbackStore.setSnapshot({...snapshot, playing: next});
-				}
+				Internals.updatePlaybackState(playbackStore, {playing: next});
 			},
 			setBuffering: (buffering) => {
-				const snapshot = playbackStore.store.getSnapshot();
-				if (snapshot.buffering !== buffering) {
-					playbackStore.setSnapshot({...snapshot, buffering});
-				}
+				Internals.updatePlaybackState(playbackStore, {buffering});
 			},
 			subscribePlayback: playbackStore.store.subscribe,
 			isBuffering: readIsBuffering,

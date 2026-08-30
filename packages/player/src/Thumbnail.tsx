@@ -117,10 +117,7 @@ const ThumbnailFn = <
 			setFrame: () => undefined,
 			setPlaying: () => undefined,
 			setBuffering: (buffering) => {
-				const snapshot = playbackStore.store.getSnapshot();
-				if (snapshot.buffering !== buffering) {
-					playbackStore.setSnapshot({...snapshot, buffering});
-				}
+				Internals.updatePlaybackState(playbackStore, {buffering});
 			},
 			subscribePlayback: playbackStore.store.subscribe,
 			isBuffering: () => playbackStore.store.getSnapshot().buffering,

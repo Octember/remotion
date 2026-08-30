@@ -7,7 +7,10 @@ import React, {
 	useRef,
 	useState,
 } from 'react';
-import {createRuntimeValueStore} from './runtime-value-store.js';
+import {
+	createRuntimeValueStore,
+	type RuntimeValueStoreController,
+} from './runtime-value-store.js';
 import {
 	getInitialFrameState,
 	type PlayableMediaTag,
@@ -29,6 +32,21 @@ export type PlaybackState = Readonly<{
 	playing: boolean;
 	buffering: boolean;
 }>;
+
+export const updatePlaybackState = (
+	playbackStore: RuntimeValueStoreController<PlaybackState>,
+	update: Partial<PlaybackState>,
+) => {
+	const current = playbackStore.store.getSnapshot();
+	const next = {...current, ...update};
+
+	if (
+		next.playing !== current.playing ||
+		next.buffering !== current.buffering
+	) {
+		playbackStore.setSnapshot(next);
+	}
+};
 
 export type SetTimelineContextValue = {
 	setFrame: (u: React.SetStateAction<Record<string, number>>) => void;
@@ -149,19 +167,12 @@ export const TimelineContextProvider: React.FC<{
 		return {
 			setFrame,
 			setPlaying: (updater) => {
-				const snapshot = playbackStore.store.getSnapshot();
-				const current = snapshot.playing;
+				const current = playbackStore.store.getSnapshot().playing;
 				const next = typeof updater === 'function' ? updater(current) : updater;
-
-				if (current !== next) {
-					playbackStore.setSnapshot({...snapshot, playing: next});
-				}
+				updatePlaybackState(playbackStore, {playing: next});
 			},
 			setBuffering: (buffering) => {
-				const snapshot = playbackStore.store.getSnapshot();
-				if (snapshot.buffering !== buffering) {
-					playbackStore.setSnapshot({...snapshot, buffering});
-				}
+				updatePlaybackState(playbackStore, {buffering});
 			},
 			subscribePlayback: playbackStore.store.subscribe,
 			isBuffering: readIsBuffering,

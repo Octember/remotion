@@ -17,6 +17,7 @@ import {
 	PlaybackRateContext,
 	SetTimelineContext,
 	TimelineContext,
+	updatePlaybackState,
 } from '../TimelineContext.js';
 
 const Comp: React.FC = () => null;
@@ -132,10 +133,7 @@ export const WrapSequenceContext: React.FC<{
 			setFrame: () => undefined,
 			setPlaying: () => undefined,
 			setBuffering: (buffering) => {
-				const snapshot = playbackStore.store.getSnapshot();
-				if (snapshot.buffering !== buffering) {
-					playbackStore.setSnapshot({...snapshot, buffering});
-				}
+				updatePlaybackState(playbackStore, {buffering});
 			},
 			subscribePlayback: playbackStore.store.subscribe,
 			isBuffering: () => playbackStore.store.getSnapshot().buffering,
