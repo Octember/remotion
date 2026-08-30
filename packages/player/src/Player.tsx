@@ -444,10 +444,9 @@ const PlayerFn = <
 			},
 			subscribePlaying: playingStore.store.subscribe,
 			frameRef,
-			isPlaying: readIsPlaying,
 			audioAndVideoTags,
 		};
-	}, [playingStore, setFrame, frameRef, readIsPlaying]);
+	}, [playingStore, setFrame, frameRef]);
 
 	if (typeof window !== 'undefined') {
 		// eslint-disable-next-line react-hooks/rules-of-hooks

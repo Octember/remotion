@@ -75,7 +75,6 @@ const mockSetTimelineContext: SetTimelineContextValue = {
 	setPlaying: () => undefined,
 	subscribePlaying: () => () => undefined,
 	frameRef: {current: {}},
-	isPlaying: () => false,
 	audioAndVideoTags: {current: []},
 };
 
