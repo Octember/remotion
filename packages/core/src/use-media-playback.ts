@@ -152,11 +152,20 @@ export const useMediaPlayback = ({
 
 	const isPlayerBuffering = useIsPlayerBuffering(buffering);
 	useEffect(() => {
-		const pauseMedia = (reason: string) => {
+		const pauseMedia = (reason: 'not-playing' | 'buffering') => {
+			const reasonText =
+				reason === 'buffering'
+					? 'player is buffering but media tag is not'
+					: isPremounting
+						? 'media is premounting'
+						: isPostmounting
+							? 'media is postmounting'
+							: 'Player is not playing';
+
 			playbackLogging({
 				logLevel,
 				tag: 'pause',
-				message: `Pausing ${mediaRef.current?.src} because ${reason}`,
+				message: `Pausing ${mediaRef.current?.src} because ${reasonText}`,
 				mountTime,
 			});
 			mediaRef.current?.pause();
@@ -167,13 +176,7 @@ export const useMediaPlayback = ({
 		}
 
 		if (!playing) {
-			pauseMedia(
-				isPremounting
-					? 'media is premounting'
-					: isPostmounting
-						? 'media is postmounting'
-						: 'Player is not playing',
-			);
+			pauseMedia('not-playing');
 			return;
 		}
 
@@ -181,7 +184,7 @@ export const useMediaPlayback = ({
 
 		const playerBufferingNotStateButLive = buffering.buffering.current;
 		if (playerBufferingNotStateButLive && !isMediaTagBufferingOrStalled) {
-			pauseMedia('player is buffering but media tag is not');
+			pauseMedia('buffering');
 		}
 	}, [
 		isBuffering,
