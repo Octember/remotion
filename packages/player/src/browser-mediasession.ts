@@ -28,12 +28,6 @@ export const useBrowserMediaSession = ({
 	const hasEverPlayed = useRef(false);
 
 	useEffect(() => {
-		if (playing) {
-			hasEverPlayed.current = true;
-		}
-	}, [playing]);
-
-	useEffect(() => {
 		if (!navigator.mediaSession) {
 			return;
 		}
@@ -43,6 +37,7 @@ export const useBrowserMediaSession = ({
 		}
 
 		if (playing) {
+			hasEverPlayed.current = true;
 			navigator.mediaSession.playbackState = 'playing';
 		} else if (hasEverPlayed.current) {
 			navigator.mediaSession.playbackState = 'paused';
