@@ -24,7 +24,7 @@ export const useMediaTag = ({
 	isPostmounting: boolean;
 }) => {
 	const {audioAndVideoTags, isPlaying} = useTimelineContext();
-	const {subscribePlaying} = useContext(SetTimelineContext);
+	const {subscribePlayback} = useContext(SetTimelineContext);
 	const isPlayingRef = useRef(isPlaying);
 	isPlayingRef.current = isPlaying;
 	const logLevel = useLogLevel();
@@ -56,8 +56,8 @@ export const useMediaTag = ({
 			},
 		};
 		audioAndVideoTags.current.push(tag);
-		const unsubscribe = subscribePlaying(({playing}) => {
-			if (playing) {
+		const unsubscribe = subscribePlayback((state, previousState) => {
+			if (state.playing || !previousState.playing) {
 				return;
 			}
 
@@ -87,6 +87,6 @@ export const useMediaTag = ({
 		logLevel,
 		mountTime,
 		env.isPlayer,
-		subscribePlaying,
+		subscribePlayback,
 	]);
 };

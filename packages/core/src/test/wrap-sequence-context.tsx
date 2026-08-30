@@ -5,6 +5,7 @@ import type {CompositionManagerContext} from '../CompositionManagerContext.js';
 import {CompositionManager} from '../CompositionManagerContext.js';
 import type {LoggingContextValue} from '../log-level-context.js';
 import {LogLevelContext} from '../log-level-context.js';
+import {createRuntimeValueStore} from '../runtime-value-store.js';
 import {SequenceManagerProvider} from '../SequenceManager.js';
 import type {
 	PlaybackRateContextValue,
@@ -16,6 +17,7 @@ import {
 	PlaybackRateContext,
 	SetTimelineContext,
 	TimelineContext,
+	updatePlaybackState,
 } from '../TimelineContext.js';
 
 const Comp: React.FC = () => null;
@@ -70,14 +72,6 @@ const mockPlaybackRateContext: PlaybackRateContextValue = {
 	},
 };
 
-const mockSetTimelineContext: SetTimelineContextValue = {
-	setFrame: () => undefined,
-	setPlaying: () => undefined,
-	subscribePlaying: () => () => undefined,
-	frameRef: {current: {}},
-	audioAndVideoTags: {current: []},
-};
-
 const MaybeTimelineProvider: React.FC<{
 	readonly children: React.ReactNode;
 	readonly timelineContext: TimelineContextValue;
@@ -130,13 +124,32 @@ export const WrapSequenceContext: React.FC<{
 		}),
 		[currentFrame],
 	);
+	const playbackStore = useMemo(
+		() => createRuntimeValueStore({playing: false, buffering: false}),
+		[],
+	);
+	const setTimelineContext = useMemo<SetTimelineContextValue>(
+		() => ({
+			setFrame: () => undefined,
+			setPlaying: () => undefined,
+			setBuffering: (buffering) => {
+				updatePlaybackState(playbackStore, {buffering});
+			},
+			subscribePlayback: playbackStore.store.subscribe,
+			isPlaying: () => false,
+			isBuffering: () => playbackStore.store.getSnapshot().buffering,
+			frameRef: {current: {}},
+			audioAndVideoTags: {current: []},
+		}),
+		[playbackStore],
+	);
 
 	return (
 		<LogLevelContext.Provider value={logContext}>
-			<BufferingProvider>
-				<CanUseRemotionHooksProvider>
-					<MaybeTimelineProvider timelineContext={timelineContext}>
-						<SetTimelineContext.Provider value={mockSetTimelineContext}>
+			<SetTimelineContext.Provider value={setTimelineContext}>
+				<BufferingProvider>
+					<CanUseRemotionHooksProvider>
+						<MaybeTimelineProvider timelineContext={timelineContext}>
 							<MaybePlaybackRateProvider>
 								<SequenceManagerProvider>
 									<CompositionManager.Provider value={compositionContext}>
@@ -144,10 +157,10 @@ export const WrapSequenceContext: React.FC<{
 									</CompositionManager.Provider>
 								</SequenceManagerProvider>
 							</MaybePlaybackRateProvider>
-						</SetTimelineContext.Provider>
-					</MaybeTimelineProvider>
-				</CanUseRemotionHooksProvider>
-			</BufferingProvider>
+						</MaybeTimelineProvider>
+					</CanUseRemotionHooksProvider>
+				</BufferingProvider>
+			</SetTimelineContext.Provider>
 		</LogLevelContext.Provider>
 	);
 };

@@ -247,13 +247,17 @@ const PlayerFn = <
 	frameRef.current = frame;
 	const rootRef = useRef<PlayerRef>(null);
 	const audioAndVideoTags = useRef<PlayableMediaTag[]>([]);
-	const playingStore = useMemo(
-		() => Internals.createRuntimeValueStore({playing: false}),
+	const playbackStore = useMemo(
+		() => Internals.createRuntimeValueStore({playing: false, buffering: false}),
 		[],
 	);
 	const readIsPlaying = useCallback(
-		() => playingStore.store.getSnapshot().playing,
-		[playingStore],
+		() => playbackStore.store.getSnapshot().playing,
+		[playbackStore],
+	);
+	const readIsBuffering = useCallback(
+		() => playbackStore.store.getSnapshot().buffering,
+		[playbackStore],
 	);
 	const [currentPlaybackRate, setCurrentPlaybackRate] = useState(playbackRate);
 
@@ -435,18 +439,20 @@ const PlayerFn = <
 		return {
 			setFrame,
 			setPlaying: (updater) => {
-				const current = playingStore.store.getSnapshot().playing;
+				const current = playbackStore.store.getSnapshot().playing;
 				const next = typeof updater === 'function' ? updater(current) : updater;
-
-				if (current !== next) {
-					playingStore.setSnapshot({playing: next});
-				}
+				Internals.updatePlaybackState(playbackStore, {playing: next});
 			},
-			subscribePlaying: playingStore.store.subscribe,
+			setBuffering: (buffering) => {
+				Internals.updatePlaybackState(playbackStore, {buffering});
+			},
+			subscribePlayback: playbackStore.store.subscribe,
+			isPlaying: readIsPlaying,
+			isBuffering: readIsBuffering,
 			frameRef,
 			audioAndVideoTags,
 		};
-	}, [playingStore, setFrame, frameRef]);
+	}, [playbackStore, setFrame, frameRef, readIsBuffering, readIsPlaying]);
 
 	if (typeof window !== 'undefined') {
 		// eslint-disable-next-line react-hooks/rules-of-hooks
@@ -474,26 +480,28 @@ const PlayerFn = <
 
 	const player = (
 		<Internals.IsPlayerContextProvider>
-			<SharedPlayerContexts
-				timelineContext={timelineContextValue}
-				playbackRateContext={playbackRateContextValue}
-				component={component}
-				compositionHeight={compositionHeight}
-				compositionWidth={compositionWidth}
-				durationInFrames={durationInFrames}
-				fps={fps}
-				numberOfSharedAudioTags={numberOfSharedAudioTags}
-				initiallyMuted={initiallyMuted}
-				logLevel={logLevel}
-				audioLatencyHint={audioLatencyHint}
-				sampleRate={sampleRate}
-				_experimentalKeepAudioContextAlive={_experimentalKeepAudioContextAlive}
-				volumePersistenceKey={volumePersistenceKey}
-				initialVolume={initialVolume}
-				inputProps={actualInputProps}
-				audioEnabled
-			>
-				<Internals.SetTimelineContext.Provider value={setTimelineContextValue}>
+			<Internals.SetTimelineContext.Provider value={setTimelineContextValue}>
+				<SharedPlayerContexts
+					timelineContext={timelineContextValue}
+					playbackRateContext={playbackRateContextValue}
+					component={component}
+					compositionHeight={compositionHeight}
+					compositionWidth={compositionWidth}
+					durationInFrames={durationInFrames}
+					fps={fps}
+					numberOfSharedAudioTags={numberOfSharedAudioTags}
+					initiallyMuted={initiallyMuted}
+					logLevel={logLevel}
+					audioLatencyHint={audioLatencyHint}
+					sampleRate={sampleRate}
+					_experimentalKeepAudioContextAlive={
+						_experimentalKeepAudioContextAlive
+					}
+					volumePersistenceKey={volumePersistenceKey}
+					initialVolume={initialVolume}
+					inputProps={actualInputProps}
+					audioEnabled
+				>
 					<PlayerEmitterProvider currentPlaybackRate={currentPlaybackRate}>
 						<PlayerUI
 							ref={rootRef}
@@ -547,8 +555,8 @@ const PlayerFn = <
 							noSuspense={Boolean(noSuspense)}
 						/>
 					</PlayerEmitterProvider>
-				</Internals.SetTimelineContext.Provider>
-			</SharedPlayerContexts>
+				</SharedPlayerContexts>
+			</Internals.SetTimelineContext.Provider>
 		</Internals.IsPlayerContextProvider>
 	);
 

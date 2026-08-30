@@ -4,28 +4,16 @@ import React, {
 	useEffect,
 	useLayoutEffect,
 	useMemo,
-	useRef,
 	useState,
-	useSyncExternalStore,
 } from 'react';
 import type {LogLevel} from './log';
 import {LogLevelContext} from './log-level-context';
 import {playbackLogging} from './playback-logging';
+import {SetTimelineContext} from './TimelineContext.js';
 import {useRemotionEnvironment} from './use-remotion-environment';
 
 type Block = {
 	id: string;
-};
-
-type OnBufferingCallback = () => void;
-type OnResumeCallback = () => void;
-
-type ListenForBuffering = (callback: OnBufferingCallback) => {
-	remove: () => void;
-};
-
-type ListenForResume = (callback: OnResumeCallback) => {
-	remove: () => void;
 };
 
 type AddBlock = (block: Block) => {
@@ -34,29 +22,18 @@ type AddBlock = (block: Block) => {
 
 type BufferManager = {
 	addBlock: AddBlock;
-	listenForBuffering: ListenForBuffering;
-	listenForResume: ListenForResume;
-	buffering: React.RefObject<boolean>;
 };
 
 const useBufferManager = (
 	logLevel: LogLevel,
 	mountTime: number | null,
+	setBuffering: (buffering: boolean) => void,
+	isBuffering: () => boolean,
 ): BufferManager => {
 	const [blocks, setBlocks] = useState<Block[]>([]);
-	// Listener registries are refs, not state: `usePlayback` parks its loop
-	// during buffering and registers its resume listener from a rAF callback.
-	// With state, that registration only lands after the next React commit -
-	// if the last block unblocks before then, the resume dispatch reads the
-	// previous array, the listener is never called, and the playback loop
-	// stays parked forever (frame clock frozen while isPlaying() is true).
-	const onBufferingCallbacks = useRef<OnBufferingCallback[]>([]);
-	const onResumeCallbacks = useRef<OnResumeCallback[]>([]);
 
 	const env = useRemotionEnvironment();
 	const rendering = env.isRendering;
-
-	const buffering = useRef(false);
 
 	const addBlock: AddBlock = useCallback(
 		(block: Block) => {
@@ -90,39 +67,6 @@ const useBufferManager = (
 		[rendering],
 	);
 
-	const listenForBuffering: ListenForBuffering = useCallback(
-		(callback: OnBufferingCallback) => {
-			onBufferingCallbacks.current = [
-				...onBufferingCallbacks.current,
-				callback,
-			];
-
-			return {
-				remove: () => {
-					onBufferingCallbacks.current = onBufferingCallbacks.current.filter(
-						(cb) => cb !== callback,
-					);
-				},
-			};
-		},
-		[],
-	);
-
-	const listenForResume: ListenForResume = useCallback(
-		(callback: OnResumeCallback) => {
-			onResumeCallbacks.current = [...onResumeCallbacks.current, callback];
-
-			return {
-				remove: () => {
-					onResumeCallbacks.current = onResumeCallbacks.current.filter(
-						(cb) => cb !== callback,
-					);
-				},
-			};
-		},
-		[],
-	);
-
 	useEffect(() => {
 		if (rendering) {
 			return;
@@ -131,9 +75,8 @@ const useBufferManager = (
 		// Only fire on the `false -> true` transition: adding a block while
 		// already buffering (e.g. a second media element starts loading) must
 		// not re-dispatch `waiting` to listeners.
-		if (blocks.length > 0 && !buffering.current) {
-			buffering.current = true;
-			[...onBufferingCallbacks.current].forEach((c) => c());
+		if (blocks.length > 0 && !isBuffering()) {
+			setBuffering(true);
 			playbackLogging({
 				logLevel,
 				message: 'Player is entering buffer state',
@@ -141,10 +84,6 @@ const useBufferManager = (
 				tag: 'player',
 			});
 		}
-
-		// Intentionally only firing when blocks change, not the callbacks
-		// otherwise a buffering callback might remove itself after being called
-		// and trigger again
 
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [blocks]);
@@ -159,9 +98,8 @@ const useBufferManager = (
 			// Only fire on the `true -> false` transition: the initial mount and
 			// a block that was added and removed within the same commit must not
 			// dispatch `resume` to listeners.
-			if (blocks.length === 0 && buffering.current) {
-				buffering.current = false;
-				[...onResumeCallbacks.current].forEach((c) => c());
+			if (blocks.length === 0 && isBuffering()) {
+				setBuffering(false);
 				playbackLogging({
 					logLevel,
 					message: 'Player is exiting buffer state',
@@ -169,16 +107,11 @@ const useBufferManager = (
 					tag: 'player',
 				});
 			}
-			// Intentionally only firing when blocks change, not the callbacks
-			// otherwise a resume callback might remove itself after being called
-			// and trigger again
 			// eslint-disable-next-line react-hooks/exhaustive-deps
 		}, [blocks]);
 	}
 
-	return useMemo(() => {
-		return {addBlock, listenForBuffering, listenForResume, buffering};
-	}, [addBlock, buffering, listenForBuffering, listenForResume]);
+	return useMemo(() => ({addBlock}), [addBlock]);
 };
 
 export const BufferingContextReact = React.createContext<BufferManager | null>(
@@ -189,32 +122,17 @@ export const BufferingProvider: React.FC<{
 	readonly children: React.ReactNode;
 }> = ({children}) => {
 	const {logLevel, mountTime} = useContext(LogLevelContext);
-	const bufferManager = useBufferManager(logLevel ?? 'info', mountTime);
+	const {isBuffering, setBuffering} = useContext(SetTimelineContext);
+	const bufferManager = useBufferManager(
+		logLevel ?? 'info',
+		mountTime,
+		setBuffering,
+		isBuffering,
+	);
 
 	return (
 		<BufferingContextReact.Provider value={bufferManager}>
 			{children}
 		</BufferingContextReact.Provider>
 	);
-};
-
-export const useIsPlayerBuffering = (bufferManager: BufferManager) => {
-	const subscribe = useCallback(
-		(onChange: () => void) => {
-			const buffer = bufferManager.listenForBuffering(onChange);
-			const resume = bufferManager.listenForResume(onChange);
-
-			return () => {
-				buffer.remove();
-				resume.remove();
-			};
-		},
-		[bufferManager],
-	);
-	const getSnapshot = useCallback(
-		() => bufferManager.buffering.current,
-		[bufferManager],
-	);
-
-	return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 };

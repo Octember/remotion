@@ -4,7 +4,7 @@ import {SetTimelineContext} from './TimelineContext.js';
 
 export const usePlaying = () => {
 	const {isPlaying} = useTimelineContext();
-	const {subscribePlaying} = useContext(SetTimelineContext);
+	const {subscribePlayback} = useContext(SetTimelineContext);
 	// Read the local Freeze override, but subscribe to the shared playing store.
-	return useSyncExternalStore(subscribePlaying, isPlaying, isPlaying);
+	return useSyncExternalStore(subscribePlayback, isPlaying, isPlaying);
 };

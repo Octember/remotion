@@ -7,7 +7,10 @@ import React, {
 	useRef,
 	useState,
 } from 'react';
-import {createRuntimeValueStore} from './runtime-value-store.js';
+import {
+	createRuntimeValueStore,
+	type RuntimeValueStoreController,
+} from './runtime-value-store.js';
 import {
 	getInitialFrameState,
 	type PlayableMediaTag,
@@ -25,12 +28,35 @@ export type PlaybackRateContextValue = {
 	setPlaybackRate: (u: React.SetStateAction<number>) => void;
 };
 
+export type PlaybackState = Readonly<{
+	playing: boolean;
+	buffering: boolean;
+}>;
+
+export const updatePlaybackState = (
+	playbackStore: RuntimeValueStoreController<PlaybackState>,
+	update: Partial<PlaybackState>,
+) => {
+	const current = playbackStore.store.getSnapshot();
+	const next = {...current, ...update};
+
+	if (
+		next.playing !== current.playing ||
+		next.buffering !== current.buffering
+	) {
+		playbackStore.setSnapshot(next);
+	}
+};
+
 export type SetTimelineContextValue = {
 	setFrame: (u: React.SetStateAction<Record<string, number>>) => void;
 	setPlaying: (u: React.SetStateAction<boolean>) => void;
-	subscribePlaying: (
-		listener: (state: Readonly<{playing: boolean}>) => void,
+	setBuffering: (buffering: boolean) => void;
+	subscribePlayback: (
+		listener: (state: PlaybackState, previousState: PlaybackState) => void,
 	) => () => void;
+	isPlaying: () => boolean;
+	isBuffering: () => boolean;
 	frameRef: RefObject<Record<string, number>>;
 	audioAndVideoTags: RefObject<PlayableMediaTag[]>;
 };
@@ -42,7 +68,10 @@ export const SetTimelineContext = createContext<SetTimelineContextValue>({
 	setPlaying: () => {
 		throw new Error('default');
 	},
-	subscribePlaying: () => () => undefined,
+	setBuffering: () => undefined,
+	subscribePlayback: () => () => undefined,
+	isPlaying: () => false,
+	isBuffering: () => false,
 	frameRef: {current: {}},
 	audioAndVideoTags: {current: []},
 });
@@ -60,8 +89,8 @@ export const TimelineContextProvider: React.FC<{
 	readonly children: React.ReactNode;
 	readonly frameState: Record<string, number> | null;
 }> = ({children, frameState}) => {
-	const playingStore = useMemo(
-		() => createRuntimeValueStore({playing: false}),
+	const playbackStore = useMemo(
+		() => createRuntimeValueStore({playing: false, buffering: false}),
 		[],
 	);
 
@@ -76,8 +105,12 @@ export const TimelineContextProvider: React.FC<{
 	frameRef.current = frame;
 
 	const readIsPlaying = useCallback(
-		() => playingStore.store.getSnapshot().playing,
-		[playingStore],
+		() => playbackStore.store.getSnapshot().playing,
+		[playbackStore],
+	);
+	const readIsBuffering = useCallback(
+		() => playbackStore.store.getSnapshot().buffering,
+		[playbackStore],
 	);
 
 	const {delayRender, continueRender} = useDelayRender();
@@ -136,18 +169,20 @@ export const TimelineContextProvider: React.FC<{
 		return {
 			setFrame,
 			setPlaying: (updater) => {
-				const current = playingStore.store.getSnapshot().playing;
+				const current = playbackStore.store.getSnapshot().playing;
 				const next = typeof updater === 'function' ? updater(current) : updater;
-
-				if (current !== next) {
-					playingStore.setSnapshot({playing: next});
-				}
+				updatePlaybackState(playbackStore, {playing: next});
 			},
-			subscribePlaying: playingStore.store.subscribe,
+			setBuffering: (buffering) => {
+				updatePlaybackState(playbackStore, {buffering});
+			},
+			subscribePlayback: playbackStore.store.subscribe,
+			isPlaying: readIsPlaying,
+			isBuffering: readIsBuffering,
 			frameRef,
 			audioAndVideoTags,
 		};
-	}, [playingStore]);
+	}, [playbackStore, readIsBuffering, readIsPlaying]);
 
 	return (
 		<AbsoluteTimeContext.Provider value={timelineContextValue}>
