@@ -440,11 +440,6 @@ const PlayerFn = <
 
 				if (current !== next) {
 					playingStore.setSnapshot({playing: next});
-					if (!next) {
-						audioAndVideoTags.current.forEach((tag) =>
-							tag.pause?.('Player is not playing'),
-						);
-					}
 				}
 			},
 			subscribePlaying: playingStore.store.subscribe,
