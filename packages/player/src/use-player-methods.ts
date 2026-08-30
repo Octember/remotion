@@ -251,10 +251,6 @@ export const usePlayerMethods = (): UsePlayerMethods => {
 		return readIsPlaying();
 	}, [readIsPlaying]);
 
-	const isBuffering = useCallback(() => {
-		return readIsBuffering();
-	}, [readIsBuffering]);
-
 	return useMemo(() => {
 		return {
 			frameBack,
@@ -265,7 +261,7 @@ export const usePlayerMethods = (): UsePlayerMethods => {
 			seek,
 			getCurrentFrame,
 			isPlaying,
-			isBuffering,
+			isBuffering: readIsBuffering,
 			pauseAndReturnToPlayStart,
 			toggle,
 		};
@@ -274,11 +270,11 @@ export const usePlayerMethods = (): UsePlayerMethods => {
 		frameBack,
 		frameForward,
 		getCurrentFrame,
-		isBuffering,
 		isPlaying,
 		pause,
 		pauseAndReturnToPlayStart,
 		play,
+		readIsBuffering,
 		seek,
 		toggle,
 	]);
