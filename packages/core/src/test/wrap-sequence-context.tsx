@@ -136,6 +136,7 @@ export const WrapSequenceContext: React.FC<{
 				updatePlaybackState(playbackStore, {buffering});
 			},
 			subscribePlayback: playbackStore.store.subscribe,
+			isPlaying: () => false,
 			isBuffering: () => playbackStore.store.getSnapshot().buffering,
 			frameRef: {current: {}},
 			audioAndVideoTags: {current: []},

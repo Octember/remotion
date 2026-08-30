@@ -55,6 +55,7 @@ export type SetTimelineContextValue = {
 	subscribePlayback: (
 		listener: (state: PlaybackState, previousState: PlaybackState) => void,
 	) => () => void;
+	isPlaying: () => boolean;
 	isBuffering: () => boolean;
 	frameRef: RefObject<Record<string, number>>;
 	audioAndVideoTags: RefObject<PlayableMediaTag[]>;
@@ -69,6 +70,7 @@ export const SetTimelineContext = createContext<SetTimelineContextValue>({
 	},
 	setBuffering: () => undefined,
 	subscribePlayback: () => () => undefined,
+	isPlaying: () => false,
 	isBuffering: () => false,
 	frameRef: {current: {}},
 	audioAndVideoTags: {current: []},
@@ -175,11 +177,12 @@ export const TimelineContextProvider: React.FC<{
 				updatePlaybackState(playbackStore, {buffering});
 			},
 			subscribePlayback: playbackStore.store.subscribe,
+			isPlaying: readIsPlaying,
 			isBuffering: readIsBuffering,
 			frameRef,
 			audioAndVideoTags,
 		};
-	}, [playbackStore, readIsBuffering]);
+	}, [playbackStore, readIsBuffering, readIsPlaying]);
 
 	return (
 		<AbsoluteTimeContext.Provider value={timelineContextValue}>

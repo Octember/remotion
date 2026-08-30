@@ -120,6 +120,7 @@ const ThumbnailFn = <
 				Internals.updatePlaybackState(playbackStore, {buffering});
 			},
 			subscribePlayback: playbackStore.store.subscribe,
+			isPlaying: () => false,
 			isBuffering: () => playbackStore.store.getSnapshot().buffering,
 			frameRef,
 			audioAndVideoTags,

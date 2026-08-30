@@ -447,11 +447,12 @@ const PlayerFn = <
 				Internals.updatePlaybackState(playbackStore, {buffering});
 			},
 			subscribePlayback: playbackStore.store.subscribe,
+			isPlaying: readIsPlaying,
 			isBuffering: readIsBuffering,
 			frameRef,
 			audioAndVideoTags,
 		};
-	}, [playbackStore, setFrame, frameRef, readIsBuffering]);
+	}, [playbackStore, setFrame, frameRef, readIsBuffering, readIsPlaying]);
 
 	if (typeof window !== 'undefined') {
 		// eslint-disable-next-line react-hooks/rules-of-hooks

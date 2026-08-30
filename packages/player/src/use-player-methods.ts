@@ -21,10 +21,13 @@ export type UsePlayerMethods = {
 export const usePlayerMethods = (): UsePlayerMethods => {
 	const setFrame = Internals.Timeline.useTimelineSetFrame();
 	const setTimelinePosition = Internals.Timeline.useTimelineSetFrame();
-	const {isPlaying: readIsPlaying} = Internals.Timeline.useTimelineContext();
-	const {setPlaying, frameRef, audioAndVideoTags, isBuffering} = useContext(
-		Internals.SetTimelineContext,
-	);
+	const {
+		setPlaying,
+		frameRef,
+		audioAndVideoTags,
+		isPlaying: readIsPlaying,
+		isBuffering,
+	} = useContext(Internals.SetTimelineContext);
 	const audioContext = useContext(Internals.SharedAudioContext);
 	const audioTagsContext = useContext(Internals.SharedAudioTagsContext);
 	const environment = useRemotionEnvironment();
