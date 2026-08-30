@@ -19,7 +19,6 @@ import {seek} from './seek.js';
 import {
 	usePlaying,
 	usePlaybackRate,
-	useTimelineContext,
 	useTimelinePosition,
 } from './timeline-position-state.js';
 import {useCurrentFrame} from './use-current-frame.js';
@@ -37,28 +36,34 @@ const DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_NORMAL_PLAYBACK = 0.45;
 const DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_AMPLIFICATION =
 	DEFAULT_ACCEPTABLE_TIMESHIFT_WITH_NORMAL_PLAYBACK + 0.2;
 
-const getPauseReason = ({
-	reason,
+const getReasonToPause = ({
+	playing,
+	playerBuffering,
+	mediaTagBufferingOrStalled,
 	isPremounting,
 	isPostmounting,
 }: {
-	reason: 'not-playing' | 'buffering';
+	playing: boolean;
+	playerBuffering: boolean;
+	mediaTagBufferingOrStalled: boolean;
 	isPremounting: boolean;
 	isPostmounting: boolean;
 }) => {
-	if (reason === 'buffering') {
-		return 'player is buffering but media tag is not';
+	if (!playing) {
+		if (isPremounting) {
+			return 'media is premounting';
+		}
+
+		if (isPostmounting) {
+			return 'media is postmounting';
+		}
+
+		return 'Player is not playing';
 	}
 
-	if (isPremounting) {
-		return 'media is premounting';
-	}
-
-	if (isPostmounting) {
-		return 'media is postmounting';
-	}
-
-	return 'Player is not playing';
+	return playerBuffering && !mediaTagBufferingOrStalled
+		? 'player is buffering but media tag is not'
+		: null;
 };
 
 export const useMediaPlayback = ({
@@ -90,7 +95,6 @@ export const useMediaPlayback = ({
 	const frame = useCurrentFrame();
 	const absoluteFrame = useTimelinePosition();
 	const playing = usePlaying();
-	const {isPlaying} = useTimelineContext();
 	const buffering = useContext(BufferingContextReact);
 	const {fps} = useVideoConfig();
 	const mediaStartsAt = useMediaStartsAt();
@@ -176,50 +180,7 @@ export const useMediaPlayback = ({
 		);
 	})();
 
-	const isPlayerBuffering = useIsPlayerBuffering(buffering);
-	useEffect(() => {
-		const pauseMedia = (reason: 'not-playing' | 'buffering') => {
-			playbackLogging({
-				logLevel,
-				tag: 'pause',
-				message: `Pausing ${mediaRef.current?.src} because ${getPauseReason({
-					reason,
-					isPremounting,
-					isPostmounting,
-				})}`,
-				mountTime,
-			});
-			mediaRef.current?.pause();
-		};
-
-		if (mediaRef.current?.paused) {
-			return;
-		}
-
-		if (!isPlaying()) {
-			pauseMedia('not-playing');
-			return;
-		}
-
-		const isMediaTagBufferingOrStalled = isMediaTagBuffering || isBuffering();
-
-		const playerBufferingNotStateButLive = buffering.buffering.current;
-		if (playerBufferingNotStateButLive && !isMediaTagBufferingOrStalled) {
-			pauseMedia('buffering');
-		}
-	}, [
-		isBuffering,
-		isMediaTagBuffering,
-		buffering,
-		isPlayerBuffering,
-		isPremounting,
-		logLevel,
-		mediaRef,
-		mediaType,
-		mountTime,
-		isPlaying,
-		isPostmounting,
-	]);
+	const playerBuffering = useIsPlayerBuffering(buffering);
 
 	const env = useRemotionEnvironment();
 
@@ -252,6 +213,24 @@ export const useMediaPlayback = ({
 		}
 
 		const {current} = mediaRef;
+		const isMediaTagBufferingOrStalled = isMediaTagBuffering || isBuffering();
+		const pauseReason = getReasonToPause({
+			playing,
+			playerBuffering,
+			mediaTagBufferingOrStalled: isMediaTagBufferingOrStalled,
+			isPremounting,
+			isPostmounting,
+		});
+
+		if (!current.paused && pauseReason !== null) {
+			playbackLogging({
+				logLevel,
+				tag: 'pause',
+				message: `Pausing ${current.src} because ${pauseReason}`,
+				mountTime,
+			});
+			current.pause();
+		}
 
 		const action = getMediaSyncAction({
 			duration: current.duration,
@@ -268,8 +247,8 @@ export const useMediaPlayback = ({
 			lastSeekDueToShift: lastSeekDueToShift.current,
 			playing,
 			playbackRate,
-			mediaTagBufferingOrStalled: isMediaTagBuffering || isBuffering(),
-			playerBuffering: buffering.buffering.current,
+			mediaTagBufferingOrStalled: isMediaTagBufferingOrStalled,
+			playerBuffering,
 			absoluteFrame,
 			onlyWarnForMediaSeekingError,
 			isPremounting,
@@ -355,7 +334,6 @@ export const useMediaPlayback = ({
 		absoluteFrame,
 		acceptableTimeShiftButLessThanDuration,
 		bufferUntilFirstFrame,
-		buffering.buffering,
 		rvcCurrentTime,
 		logLevel,
 		desiredUnclampedTime,
@@ -365,6 +343,7 @@ export const useMediaPlayback = ({
 		mediaType,
 		onlyWarnForMediaSeekingError,
 		playbackRate,
+		playerBuffering,
 		playing,
 		src,
 		onAutoPlayError,
