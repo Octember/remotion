@@ -361,11 +361,6 @@ export class MediaPlayer {
 				});
 				this.videoAsset = videoAsset({
 					videoTrack,
-					presentation: this.mediaPresentation,
-					getLoopSegmentMediaEndTimestamp: () =>
-						this.getLoopSegmentMediaEndTimestamp(),
-					getStartTime: () => this.getStartTime(),
-					getIsLooping: () => this.loop,
 				});
 			}
 
@@ -437,7 +432,7 @@ export class MediaPlayer {
 							})
 						: Promise.resolve(),
 					this.videoAsset
-						? this.videoAsset.startVideoIterator(startTime, nonce)
+						? this.startVideoIterator(startTime, nonce)
 						: Promise.resolve(),
 				]);
 			} catch (error) {
@@ -499,6 +494,58 @@ export class MediaPlayer {
 		await this.seekToWithQueue(newTime, time);
 	}
 
+	private startVideoIterator = async (
+		timeToSeek: number,
+		nonce: Nonce,
+	): Promise<void> => {
+		if (this.disposed || !this.videoAsset || !this.mediaPresentation) {
+			return;
+		}
+
+		this.mediaPresentation.clearCurrentFrame();
+		using _ = this.mediaPresentation.createDelayPlaybackHandle();
+		const frame = await this.videoAsset.startVideoIterator(timeToSeek, nonce);
+		if (frame) {
+			await this.mediaPresentation.drawFrame(frame);
+		}
+	};
+
+	private seekVideo = async ({
+		newTime,
+		nonce,
+	}: {
+		newTime: number;
+		nonce: Nonce;
+	}): Promise<void> => {
+		if (!this.videoAsset || !this.mediaPresentation) {
+			return;
+		}
+
+		const result = await this.videoAsset.seek({
+			newTime,
+			nonce,
+			fps: this.fps,
+			playbackRate: this.playbackRate,
+			isPlaying: this.playing,
+			isLooping: this.loop,
+			loopSegmentMediaEndTimestamp: this.getLoopSegmentMediaEndTimestamp(),
+			loopStartTime: this.getStartTime(),
+		});
+
+		if (result.type === 'frame') {
+			await this.mediaPresentation.drawFrame(result.frame);
+			return;
+		}
+
+		if (result.type === 'restart') {
+			if (this.disposed) {
+				return;
+			}
+
+			await this.startVideoIterator(newTime, nonce);
+		}
+	};
+
 	private async seekToDoNotCallDirectly(
 		newTime: number,
 		unloopedNewTime: number,
@@ -510,13 +557,7 @@ export class MediaPlayer {
 
 		try {
 			await Promise.all([
-				this.videoAsset?.seek({
-					newTime,
-					nonce,
-					fps: this.fps,
-					playbackRate: this.playbackRate,
-					isPlaying: this.playing,
-				}),
+				this.seekVideo({newTime, nonce}),
 				this.audioIteratorManager?.seek({
 					newTime,
 					unloopedNewTime,
@@ -741,7 +782,9 @@ export class MediaPlayer {
 
 		// Mark all async operations as stale
 		this.nonceManager.createAsyncOperation();
+		this.mediaPresentation?.clearCurrentFrame();
 		this.videoAsset?.destroy();
+		this.mediaPresentation?.dispose();
 		this.audioIteratorManager?.destroyIterator();
 		// Release our reference to the shared Input; it is only disposed once the
 		// last MediaPlayer using this src releases it.

@@ -1,7 +1,6 @@
-import type {InputVideoTrack} from 'mediabunny';
+import type {InputVideoTrack, WrappedCanvas} from 'mediabunny';
 import {CanvasSink} from 'mediabunny';
 import {roundTo4Digits} from './helpers/round-to-4-digits';
-import type {MediaPresentation} from './media-presentation';
 import type {Nonce} from './nonce-manager';
 import {makePrewarmedVideoIteratorCache} from './prewarm-iterator-for-looping';
 import {
@@ -33,19 +32,7 @@ export const isSequentialMediaTimeAdvance = ({
 	);
 };
 
-export const videoAsset = ({
-	presentation,
-	videoTrack,
-	getLoopSegmentMediaEndTimestamp,
-	getStartTime,
-	getIsLooping,
-}: {
-	videoTrack: InputVideoTrack;
-	presentation: MediaPresentation;
-	getLoopSegmentMediaEndTimestamp: () => number;
-	getStartTime: () => number;
-	getIsLooping: () => boolean;
-}) => {
+export const videoAsset = ({videoTrack}: {videoTrack: InputVideoTrack}) => {
 	let videoIteratorsCreated = 0;
 	let videoFrameIterator: VideoIterator | null = null;
 	let currentSeek: number | null = null;
@@ -65,10 +52,8 @@ export const videoAsset = ({
 	const startVideoIterator = async (
 		timeToSeek: number,
 		nonce: Nonce,
-	): Promise<void> => {
-		presentation.clearCurrentFrame();
+	): Promise<WrappedCanvas | null> => {
 		videoFrameIterator?.destroy();
-		using _ = presentation.createDelayPlaybackHandle();
 		currentSeek = timeToSeek;
 
 		const iterator = await createVideoIterator(
@@ -79,7 +64,7 @@ export const videoAsset = ({
 		videoFrameIterator = iterator;
 
 		if (iterator.isDestroyed()) {
-			return;
+			return null;
 		}
 
 		if (nonce.isStale()) {
@@ -87,22 +72,22 @@ export const videoAsset = ({
 			// lands, so returning undrawn would discard every frame and freeze
 			// the preview. Painting is safe: the newer seek always lands last.
 			if (!videoFrameIterator.isDestroyed() && iterator.initialFrame) {
-				await presentation.drawFrame(iterator.initialFrame);
+				return iterator.initialFrame;
 			}
 
-			return;
+			return null;
 		}
 
 		if (videoFrameIterator.isDestroyed()) {
-			return;
+			return null;
 		}
 
 		if (!iterator.initialFrame) {
 			// media ended
-			return;
+			return null;
 		}
 
-		await presentation.drawFrame(iterator.initialFrame);
+		return iterator.initialFrame;
 	};
 
 	const seek = async ({
@@ -111,32 +96,40 @@ export const videoAsset = ({
 		fps,
 		playbackRate,
 		isPlaying,
+		isLooping,
+		loopSegmentMediaEndTimestamp,
+		loopStartTime,
 	}: {
 		newTime: number;
 		nonce: Nonce;
 		fps: number;
 		playbackRate: number;
 		isPlaying: boolean;
-	}) => {
+		isLooping: boolean;
+		loopSegmentMediaEndTimestamp: number;
+		loopStartTime: number;
+	}): Promise<
+		{type: 'frame'; frame: WrappedCanvas} | {type: 'restart'} | {type: 'none'}
+	> => {
 		if (!videoFrameIterator) {
-			return;
+			return {type: 'none'};
 		}
 
 		if (
 			currentSeek !== null &&
 			roundTo4Digits(currentSeek) === roundTo4Digits(newTime)
 		) {
-			return;
+			return {type: 'none'};
 		}
 
 		const previousTime = currentSeek;
 		currentSeek = newTime;
 
-		if (getIsLooping()) {
+		if (isLooping) {
 			// If less than 1 second from the end away, we pre-warm a new iterator
-			if (getLoopSegmentMediaEndTimestamp() - newTime < 1) {
+			if (loopSegmentMediaEndTimestamp - newTime < 1) {
 				prewarmedVideoIteratorCache.prewarmIteratorForLooping({
-					timeToSeek: getStartTime(),
+					timeToSeek: loopStartTime,
 				});
 			}
 		}
@@ -164,15 +157,14 @@ export const videoAsset = ({
 		// frame might be better than what we currently have
 		// TODO: check if this is actually true
 		if (videoSatisfyResult.type === 'satisfied') {
-			await presentation.drawFrame(videoSatisfyResult.frame);
-			return;
+			return {type: 'frame', frame: videoSatisfyResult.frame};
 		}
 
 		if (nonce.isStale()) {
-			return;
+			return {type: 'none'};
 		}
 
-		await startVideoIterator(newTime, nonce);
+		return {type: 'restart'};
 	};
 
 	return {
@@ -180,10 +172,8 @@ export const videoAsset = ({
 		getVideoIteratorsCreated: () => videoIteratorsCreated,
 		seek,
 		destroy: () => {
-			presentation.clearCurrentFrame();
 			prewarmedVideoIteratorCache.destroy();
 			videoFrameIterator?.destroy();
-			presentation.dispose();
 			videoFrameIterator = null;
 		},
 		getVideoFrameIterator: () => videoFrameIterator,
