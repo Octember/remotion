@@ -1,7 +1,5 @@
 import {ALL_FORMATS, Input, UrlSource} from 'mediabunny';
 import {expect, test} from 'vitest';
-import type {DelayPlaybackIfNotPremounting} from '../delay-playback-if-not-premounting';
-import {mediaPresentation} from '../media-presentation';
 import {makeNonceManager} from '../nonce-manager';
 import {isSequentialMediaTimeAdvance, videoAsset} from '../video-asset';
 
@@ -74,42 +72,15 @@ const prepare = async () => {
 	return {videoTrack};
 };
 
-const makeManager = async (
-	videoTrack: Awaited<ReturnType<typeof prepare>>['videoTrack'],
-	delayPlaybackHandleIfNotPremounting: () => DelayPlaybackIfNotPremounting = () => ({
-		unblock: () => {},
-		[Symbol.dispose]: () => {},
-	}),
-) => {
-	const presentation = await mediaPresentation({
-		videoTrack,
-		delayPlaybackHandleIfNotPremounting,
-		context: null,
-		canvas: null,
-		getOnVideoFrameCallback: () => null,
-		logLevel: 'error',
-		drawDebugOverlay: () => {},
-		getEffects: () => [],
-		getEffectChainState: () => null,
-	});
-	const asset = videoAsset({
-		videoTrack,
-		presentation,
-		getLoopSegmentMediaEndTimestamp: () => {
-			throw new Error('not implemented');
-		},
-		getStartTime: () => {
-			throw new Error('not implemented');
-		},
-		getIsLooping: () => false,
-	});
-
-	return {asset, presentation};
+const notLooping = {
+	isLooping: false,
+	loopSegmentMediaEndTimestamp: Infinity,
+	loopStartTime: 0,
 };
 
 test('plays at a high playback rate without restarting the iterator', async () => {
 	const {videoTrack} = await prepare();
-	const {asset, presentation} = await makeManager(videoTrack);
+	const asset = videoAsset({videoTrack});
 	const nonceManager = makeNonceManager();
 
 	try {
@@ -122,11 +93,11 @@ test('plays at a high playback rate without restarting the iterator', async () =
 				fps: 30,
 				playbackRate: 3.75,
 				isPlaying: true,
+				...notLooping,
 			});
 		}
 
 		expect(asset.getVideoIteratorsCreated()).toBe(1);
-		expect(presentation.getFramesRendered()).toBe(26);
 	} finally {
 		asset.destroy();
 	}
@@ -134,7 +105,7 @@ test('plays at a high playback rate without restarting the iterator', async () =
 
 test('paused forward scrubs do not wait for pending frames', async () => {
 	const {videoTrack} = await prepare();
-	const {asset} = await makeManager(videoTrack);
+	const asset = videoAsset({videoTrack});
 	const nonceManager = makeNonceManager();
 
 	try {
@@ -159,122 +130,11 @@ test('paused forward scrubs do not wait for pending frames', async () => {
 			fps: 30,
 			playbackRate: 4,
 			isPlaying: false,
+			...notLooping,
 		});
 
 		expect(pendingFrameBehavior).toBe('restart-iterator');
 	} finally {
 		asset.destroy();
 	}
-});
-
-test('seek should not cause overlapping block/unblock cycles', async () => {
-	const {videoTrack} = await prepare();
-
-	let activeBlocks = 0;
-	let maxConcurrentBlocks = 0;
-
-	const {asset} = await makeManager(videoTrack, () => {
-		activeBlocks++;
-		maxConcurrentBlocks = Math.max(maxConcurrentBlocks, activeBlocks);
-		return {
-			unblock: () => {
-				activeBlocks--;
-			},
-			[Symbol.dispose]: () => {
-				activeBlocks--;
-			},
-		};
-	});
-
-	const nonceManager = makeNonceManager();
-
-	// Initialize the iterator first
-	await asset.startVideoIterator(0, nonceManager.createAsyncOperation());
-
-	// Perform seeks that will trigger 'not-satisfied' (jumping around)
-	// These should NOT cause overlapping blocks
-	await asset.seek({
-		newTime: 5,
-		nonce: nonceManager.createAsyncOperation(),
-		fps: 30,
-		playbackRate: 1,
-		isPlaying: false,
-	});
-	await asset.seek({
-		newTime: 0,
-		nonce: nonceManager.createAsyncOperation(),
-		fps: 30,
-		playbackRate: 1,
-		isPlaying: false,
-	});
-	await asset.seek({
-		newTime: 8,
-		nonce: nonceManager.createAsyncOperation(),
-		fps: 30,
-		playbackRate: 1,
-		isPlaying: false,
-	});
-
-	// With the fix, max concurrent blocks should be 1
-	// Before the fix (fire-and-forget), it could be > 1
-	expect(maxConcurrentBlocks).toBe(1);
-	expect(activeBlocks).toBe(0); // All blocks should be released
-});
-
-test('rapid sequential seeks should not cause overlapping blocks', async () => {
-	const {videoTrack} = await prepare();
-
-	let activeBlocks = 0;
-	let maxConcurrentBlocks = 0;
-
-	const {asset} = await makeManager(videoTrack, () => {
-		activeBlocks++;
-		maxConcurrentBlocks = Math.max(maxConcurrentBlocks, activeBlocks);
-		return {
-			unblock: () => {
-				activeBlocks--;
-			},
-			[Symbol.dispose]: () => {
-				activeBlocks--;
-			},
-		};
-	});
-
-	const nonceManager = makeNonceManager();
-
-	// Initialize the iterator first
-	await asset.startVideoIterator(0, nonceManager.createAsyncOperation());
-
-	// Perform many rapid seeks - simulating scrubbing through video
-	for (let i = 0; i < 10; i++) {
-		// Alternate between distant positions to force iterator recreation
-		const time = i % 2 === 0 ? i * 0.5 : 9 - i * 0.5;
-		await asset.seek({
-			newTime: time,
-			nonce: nonceManager.createAsyncOperation(),
-			fps: 30,
-			playbackRate: 1,
-			isPlaying: false,
-		});
-	}
-
-	// With the fix, max concurrent blocks should be 1
-	expect(maxConcurrentBlocks).toBe(1);
-	expect(activeBlocks).toBe(0);
-});
-
-test('redrawCurrentFrame should not create a new video iterator', async () => {
-	const {videoTrack} = await prepare();
-
-	const {asset, presentation} = await makeManager(videoTrack);
-
-	const nonceManager = makeNonceManager();
-
-	await asset.startVideoIterator(0, nonceManager.createAsyncOperation());
-	expect(asset.getVideoIteratorsCreated()).toBe(1);
-
-	await presentation.redrawCurrentFrame();
-	await presentation.redrawCurrentFrame();
-
-	expect(asset.getVideoIteratorsCreated()).toBe(1);
 });

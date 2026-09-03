@@ -6,7 +6,6 @@ import {
 	globalMediaCache,
 	keyframeManager,
 } from '../caches';
-import {mediaPresentation} from '../media-presentation';
 import {makeNonceManager} from '../nonce-manager';
 import {videoAsset} from '../video-asset';
 import {extractFrame} from '../video-extraction/extract-frame';
@@ -27,50 +26,42 @@ test('in preview, should properly buffer and draw frames', async (t) => {
 		throw new Error('No video track found');
 	}
 
-	const presentation = await mediaPresentation({
-		videoTrack,
-		delayPlaybackHandleIfNotPremounting: () => ({
-			unblock: () => {},
-			[Symbol.dispose]: () => {},
-		}),
-		context: null,
-		canvas: null,
-		drawDebugOverlay: () => {},
-		logLevel: 'info',
-		getOnVideoFrameCallback: () => null,
-		getEffects: () => [],
-		getEffectChainState: () => null,
-	});
-	const manager = videoAsset({
-		videoTrack,
-		presentation,
-		getIsLooping: () => false,
-		getLoopSegmentMediaEndTimestamp: () => {
-			throw new Error('not implemented');
-		},
-		getStartTime: () => {
-			throw new Error('not implemented');
-		},
-	});
+	const asset = videoAsset({videoTrack});
+	const seek = async (
+		options: Omit<
+			Parameters<typeof asset.seek>[0],
+			'isLooping' | 'loopSegmentMediaEndTimestamp' | 'loopStartTime'
+		>,
+	) => {
+		const result = await asset.seek({
+			...options,
+			isLooping: false,
+			loopSegmentMediaEndTimestamp: Infinity,
+			loopStartTime: 0,
+		});
+		if (result.type === 'restart') {
+			await asset.startVideoIterator(options.newTime, options.nonce);
+		}
+	};
 
 	const nonceManager = makeNonceManager();
 
-	await manager.startVideoIterator(0, nonceManager.createAsyncOperation());
-	await manager.seek({
+	await asset.startVideoIterator(0, nonceManager.createAsyncOperation());
+	await seek({
 		newTime: 0.03,
 		nonce: nonceManager.createAsyncOperation(),
 		fps: 30,
 		playbackRate: 1,
 		isPlaying: false,
 	});
-	await manager.seek({
+	await seek({
 		newTime: 1,
 		nonce: nonceManager.createAsyncOperation(),
 		fps: 30,
 		playbackRate: 1,
 		isPlaying: false,
 	});
-	await manager.seek({
+	await seek({
 		newTime: 2,
 		nonce: nonceManager.createAsyncOperation(),
 		fps: 30,
@@ -78,10 +69,10 @@ test('in preview, should properly buffer and draw frames', async (t) => {
 		isPlaying: false,
 	});
 
-	const iteratorsCreated = manager.getVideoIteratorsCreated();
+	const iteratorsCreated = asset.getVideoIteratorsCreated();
 	expect(iteratorsCreated).toBe(1);
 
-	await manager.seek({
+	await seek({
 		newTime: 4.5,
 		nonce: nonceManager.createAsyncOperation(),
 		fps: 30,
@@ -89,10 +80,10 @@ test('in preview, should properly buffer and draw frames', async (t) => {
 		isPlaying: false,
 	});
 
-	const iteratorsCreated2 = manager.getVideoIteratorsCreated();
+	const iteratorsCreated2 = asset.getVideoIteratorsCreated();
 	expect(iteratorsCreated2).toBe(2);
 
-	manager.destroy();
+	asset.destroy();
 });
 
 test('same goes for audio', async () => {
