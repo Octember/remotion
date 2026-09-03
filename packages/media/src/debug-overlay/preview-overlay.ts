@@ -1,5 +1,6 @@
 import type {AudioIteratorManager} from '../audio-iterator-manager';
-import type {VideoIteratorManager} from '../video-iterator-manager';
+import type {MediaPresentation} from '../media-presentation';
+import type {VideoAsset} from '../video-asset';
 
 export const drawPreviewOverlay = ({
 	context,
@@ -8,7 +9,8 @@ export const drawPreviewOverlay = ({
 	audioSyncAnchor,
 	playing,
 	audioIteratorManager,
-	videoIteratorManager,
+	videoAsset,
+	mediaPresentation,
 	playbackRate,
 }: {
 	context: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
@@ -17,7 +19,8 @@ export const drawPreviewOverlay = ({
 	audioSyncAnchor: {value: number} | null;
 	playing: boolean;
 	audioIteratorManager: AudioIteratorManager | null;
-	videoIteratorManager: VideoIteratorManager | null;
+	videoAsset: VideoAsset | null;
+	mediaPresentation: MediaPresentation | null;
 	playbackRate: number;
 }) => {
 	const anchorValue = audioSyncAnchor?.value ?? 0;
@@ -25,10 +28,10 @@ export const drawPreviewOverlay = ({
 	// Collect all lines to be rendered
 	const lines: string[] = [
 		'Debug overlay',
-		`Video iterators created: ${videoIteratorManager?.getVideoIteratorsCreated()}`,
+		`Video iterators created: ${videoAsset?.getVideoIteratorsCreated()}`,
 		`Audio iterators created: ${audioIteratorManager?.getAudioIteratorsCreated()}`,
 		`Audio scheduled: ${(audioIteratorManager?.getTotalAudioScheduledInSeconds() ?? 0).toFixed(3)}s`,
-		`Frames rendered: ${videoIteratorManager?.getFramesRendered()}`,
+		`Frames rendered: ${mediaPresentation?.getFramesRendered()}`,
 		`Audio context state: ${audioContextState}`,
 		audioTime
 			? `Audio time: ${((audioTime - anchorValue) * playbackRate).toFixed(3)}s`
