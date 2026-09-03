@@ -23,6 +23,7 @@ test('shares a main-thread Input acquired outside @remotion/media', async () => 
 		credentials: undefined,
 		requestInit: undefined,
 		logLevel: 'info',
+		mediaResourceManager: Internals.globalMediaResourceManager,
 	});
 
 	expect(mediaLease.input).toBe(studioLease.resource);

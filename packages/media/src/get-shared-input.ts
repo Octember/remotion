@@ -21,6 +21,17 @@ type VideoAssetLease = {
 	release: () => void;
 };
 
+type MediaResourceManager = {
+	acquire: <T>(options: {
+		key: string;
+		create: () => {resource: T; dispose: () => void};
+	}) => {
+		resource: T;
+		getOrCreateValue: <Value>(key: string, create: () => Value) => Value;
+		release: () => void;
+	};
+};
+
 // A single mediabunny `Input` (backed by one `UrlSource`) is expensive to spin
 // up for network media: on creation it must fetch and parse the container
 // header, and its `UrlSource` keeps a byte cache + demuxer state that is warm
@@ -53,11 +64,13 @@ export const acquireSharedInput = ({
 	credentials,
 	requestInit,
 	logLevel,
+	mediaResourceManager,
 }: {
 	src: string;
 	credentials: RequestCredentials | undefined;
 	requestInit: MediaRequestInit | undefined;
 	logLevel: LogLevel;
+	mediaResourceManager: MediaResourceManager;
 }): {
 	input: Input;
 	getDuration: () => Promise<number>;
@@ -75,7 +88,7 @@ export const acquireSharedInput = ({
 		credentials,
 		requestInit: normalizedRequestInit,
 	});
-	const lease = Internals.globalMediaResourceManager.acquire<Input>({
+	const lease = mediaResourceManager.acquire<Input>({
 		key: cacheKey,
 		create: () => {
 			const input = new Input({

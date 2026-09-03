@@ -1,3 +1,4 @@
+import {Internals} from 'remotion';
 import {expect, test} from 'vitest';
 import {MediaPlayer} from '../media-player';
 
@@ -28,6 +29,7 @@ test('setTrimBefore and setTrimAfter should update frame when paused', async () 
 		tagType: 'video',
 		getEffects: () => [],
 		getEffectChainState: () => null,
+		mediaResourceManager: Internals.globalMediaResourceManager,
 	});
 
 	await player.initialize(0, false, 1);

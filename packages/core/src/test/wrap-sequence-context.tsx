@@ -5,6 +5,7 @@ import type {CompositionManagerContext} from '../CompositionManagerContext.js';
 import {CompositionManager} from '../CompositionManagerContext.js';
 import type {LoggingContextValue} from '../log-level-context.js';
 import {LogLevelContext} from '../log-level-context.js';
+import {globalMediaResourceManager} from '../media-resource-manager.js';
 import {createRuntimeValueStore} from '../runtime-value-store.js';
 import {SequenceManagerProvider} from '../SequenceManager.js';
 import type {
@@ -120,6 +121,7 @@ export const WrapSequenceContext: React.FC<{
 			frame: {'my-comp': currentFrame},
 			isPlaying: () => false,
 			audioAndVideoTags: {current: []},
+			mediaResourceManager: globalMediaResourceManager,
 		}),
 		[currentFrame],
 	);
@@ -142,6 +144,7 @@ export const WrapSequenceContext: React.FC<{
 			isBuffering: () => bufferingStore.store.getSnapshot().buffering,
 			frameRef: {current: {}},
 			audioAndVideoTags: {current: []},
+			mediaResourceManager: globalMediaResourceManager,
 		}),
 		[bufferingStore],
 	);

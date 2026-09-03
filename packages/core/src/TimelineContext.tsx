@@ -7,6 +7,10 @@ import React, {
 	useRef,
 	useState,
 } from 'react';
+import {
+	type MediaResourceManager,
+	useResourceManager,
+} from './media-resource-manager.js';
 import {createRuntimeValueStore} from './runtime-value-store.js';
 import {
 	getInitialFrameState,
@@ -18,6 +22,7 @@ export type TimelineContextValue = {
 	frame: Record<string, number>;
 	isPlaying: () => boolean;
 	audioAndVideoTags: RefObject<PlayableMediaTag[]>;
+	mediaResourceManager: MediaResourceManager;
 };
 
 export type PlaybackRateContextValue = {
@@ -84,6 +89,7 @@ export const TimelineContextProvider: React.FC<{
 		() => createRuntimeValueStore({buffering: false}),
 		[],
 	);
+	const mediaResourceManager = useResourceManager();
 
 	const [playbackRate, setPlaybackRate] = useState(1);
 	const audioAndVideoTags = useRef<PlayableMediaTag[]>([]);
@@ -146,8 +152,9 @@ export const TimelineContextProvider: React.FC<{
 			frame,
 			isPlaying: readIsPlaying,
 			audioAndVideoTags,
+			mediaResourceManager,
 		};
-	}, [frame, readIsPlaying]);
+	}, [frame, mediaResourceManager, readIsPlaying]);
 
 	const playbackRateContextValue = useMemo((): PlaybackRateContextValue => {
 		return {

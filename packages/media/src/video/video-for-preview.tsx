@@ -48,6 +48,7 @@ const {
 	useEffectChainState,
 	usePlaying,
 	useBuffering,
+	useTimelineContext,
 } = Internals;
 
 type VideoForPreviewProps = NativeVideoProps & {
@@ -117,6 +118,7 @@ const VideoForPreviewAssertedShowing: React.FC<
 	...props
 }) => {
 	const src = usePreload(unpreloadedSrc);
+	const {mediaResourceManager} = useTimelineContext();
 
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const videoConfig = useUnsafeVideoConfig();
@@ -295,6 +297,7 @@ const VideoForPreviewAssertedShowing: React.FC<
 				getEffects: () => effectsRef.current,
 				getEffectChainState: (width, height) =>
 					effectChainStateRef.current?.get(width, height)!,
+				mediaResourceManager,
 			});
 
 			mediaPlayerRef.current = player;
@@ -449,6 +452,7 @@ const VideoForPreviewAssertedShowing: React.FC<
 		credentials,
 		initialRequestInit,
 		setMediaDurationInSeconds,
+		mediaResourceManager,
 	]);
 
 	warnAboutObjectFitInStyleOrClassName({style, className, logLevel});

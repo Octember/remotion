@@ -118,6 +118,7 @@ export class MediaPlayer {
 		tagType,
 		getEffects,
 		getEffectChainState,
+		mediaResourceManager,
 	}: {
 		canvas: HTMLCanvasElement | OffscreenCanvas | null;
 		src: string;
@@ -147,6 +148,7 @@ export class MediaPlayer {
 			width: number,
 			height: number,
 		) => EffectChainState | null;
+		mediaResourceManager: typeof Internals.globalMediaResourceManager;
 	}) {
 		this.canvas = canvas ?? null;
 		this.src = src;
@@ -180,6 +182,7 @@ export class MediaPlayer {
 				credentials,
 				requestInit,
 				logLevel,
+				mediaResourceManager,
 			},
 		);
 		this.input = input;

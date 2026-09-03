@@ -123,6 +123,7 @@ import {
 	globalMediaResourceManager,
 	makeMediaResourceManager,
 	MEDIABUNNY_DURATION_VALUE_KEY,
+	useResourceManager,
 } from './media-resource-manager.js';
 import {playbackLogging} from './playback-logging.js';
 import {portalNode, setPortalNodeCurrentScale} from './portal-node.js';
@@ -303,6 +304,7 @@ export const Internals = {
 	getMediabunnyInputResourceKey,
 	globalMediaResourceManager,
 	makeMediaResourceManager,
+	useResourceManager,
 	MEDIABUNNY_DURATION_VALUE_KEY,
 	makeRenderResourceManager,
 	RenderResourceManagerContext,

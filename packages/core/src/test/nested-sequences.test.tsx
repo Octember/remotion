@@ -3,6 +3,7 @@ import {cleanup, render} from '@testing-library/react';
 import {useEffect} from 'react';
 import {AbsoluteFill} from '../AbsoluteFill.js';
 import {getTimelineDuration} from '../get-timeline-duration.js';
+import {globalMediaResourceManager} from '../media-resource-manager.js';
 import {Sequence} from '../Sequence.js';
 import {TimelineContext} from '../TimelineContext.js';
 import {useCurrentFrame} from '../use-current-frame.js';
@@ -22,6 +23,7 @@ const getForFrame = (frame: number, content: React.ReactNode) => {
 					audioAndVideoTags: {
 						current: [],
 					},
+					mediaResourceManager: globalMediaResourceManager,
 				}}
 			>
 				{content}
@@ -259,6 +261,7 @@ test('Sequence freeze pins the child frame without remounting the sequence', () 
 					audioAndVideoTags: {
 						current: [],
 					},
+					mediaResourceManager: globalMediaResourceManager,
 				}}
 			>
 				{content}
@@ -280,6 +283,7 @@ test('Sequence freeze pins the child frame without remounting the sequence', () 
 					audioAndVideoTags: {
 						current: [],
 					},
+					mediaResourceManager: globalMediaResourceManager,
 				}}
 			>
 				{content}

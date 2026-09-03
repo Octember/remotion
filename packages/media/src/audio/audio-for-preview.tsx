@@ -26,6 +26,7 @@ const {
 	SequenceContext,
 	usePlaying,
 	useBuffering,
+	useTimelineContext,
 } = Internals;
 
 type NewAudioForPreviewProps = {
@@ -91,6 +92,7 @@ const AudioForPreviewAssertedShowing: React.FC<NewAudioForPreviewProps> = ({
 	const {playbackRate: globalPlaybackRate} = Internals.usePlaybackRate();
 	const sharedAudioContext = useContext(SharedAudioContext);
 	const buffer = useBufferState();
+	const {mediaResourceManager} = useTimelineContext();
 
 	const [playerMuted] = usePlayerMutedState();
 	const [mediaVolume] = useMediaVolumeState();
@@ -214,6 +216,7 @@ const AudioForPreviewAssertedShowing: React.FC<NewAudioForPreviewProps> = ({
 				tagType: 'audio',
 				getEffects: () => [],
 				getEffectChainState: () => null,
+				mediaResourceManager,
 			});
 
 			mediaPlayerRef.current = player;
@@ -363,6 +366,7 @@ const AudioForPreviewAssertedShowing: React.FC<NewAudioForPreviewProps> = ({
 		credentials,
 		initialRequestInit,
 		setMediaDurationInSeconds,
+		mediaResourceManager,
 	]);
 
 	if (shouldFallbackToNativeAudio && !disallowFallbackToHtml5Audio) {

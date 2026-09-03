@@ -1,4 +1,4 @@
-import type {useBufferState} from 'remotion';
+import {Internals, type useBufferState} from 'remotion';
 import {expect, test} from 'vitest';
 import {waitForTurn} from '../audio/sort-by-priority';
 import {MediaPlayer} from '../media-player';
@@ -38,6 +38,7 @@ const makePlayer = ({
 		tagType: 'audio',
 		getEffects: () => [],
 		getEffectChainState: () => null,
+		mediaResourceManager: Internals.globalMediaResourceManager,
 	});
 };
 

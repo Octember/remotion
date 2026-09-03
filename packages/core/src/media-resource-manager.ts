@@ -1,3 +1,5 @@
+import {useEffect, useState} from 'react';
+
 type MediaResource = {
 	resource: unknown;
 	dispose: () => void;
@@ -35,7 +37,11 @@ const disposeResource = (resource: MediaResource) => {
 	resource.dispose();
 };
 
-export const makeMediaResourceManager = (): MediaResourceManager => {
+export const makeMediaResourceManager = ({
+	disposeWhenUnused = true,
+}: {
+	disposeWhenUnused?: boolean;
+} = {}): MediaResourceManager => {
 	const resources = new Map<string, MediaResource>();
 	let disposed = false;
 
@@ -90,7 +96,7 @@ export const makeMediaResourceManager = (): MediaResourceManager => {
 
 					released = true;
 					entry.refCount--;
-					if (entry.refCount !== 0) {
+					if (entry.refCount !== 0 || !disposeWhenUnused) {
 						return;
 					}
 
@@ -171,3 +177,15 @@ export const getMediabunnyInputResourceKey = ({
 export const MEDIABUNNY_DURATION_VALUE_KEY = 'mediabunny-duration';
 
 export const globalMediaResourceManager = makeMediaResourceManager();
+
+export const useResourceManager = () => {
+	const [manager] = useState(() =>
+		makeMediaResourceManager({disposeWhenUnused: false}),
+	);
+
+	useEffect(() => {
+		return () => manager.dispose();
+	}, [manager]);
+
+	return manager;
+};
