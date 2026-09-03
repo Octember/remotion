@@ -1,5 +1,3 @@
-import {useEffect, useState} from 'react';
-
 type MediaResource = {
 	resource: unknown;
 	dispose: () => void;
@@ -177,15 +175,3 @@ export const getMediabunnyInputResourceKey = ({
 export const MEDIABUNNY_DURATION_VALUE_KEY = 'mediabunny-duration';
 
 export const globalMediaResourceManager = makeMediaResourceManager();
-
-export const useResourceManager = () => {
-	const [manager] = useState(() =>
-		makeMediaResourceManager({disposeWhenUnused: false}),
-	);
-
-	useEffect(() => {
-		return () => manager.dispose();
-	}, [manager]);
-
-	return manager;
-};

@@ -2,14 +2,15 @@ import type {RefObject} from 'react';
 import React, {
 	createContext,
 	useCallback,
+	useEffect,
 	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
 } from 'react';
 import {
+	makeMediaResourceManager,
 	type MediaResourceManager,
-	useResourceManager,
 } from './media-resource-manager.js';
 import {createRuntimeValueStore} from './runtime-value-store.js';
 import {
@@ -76,6 +77,18 @@ export const PlaybackRateContext =
 export const AbsoluteTimeContext = createContext<TimelineContextValue | null>(
 	null,
 );
+
+export const useResourceManager = () => {
+	const [manager] = useState(() =>
+		makeMediaResourceManager({disposeWhenUnused: false}),
+	);
+
+	useEffect(() => {
+		return () => manager.dispose();
+	}, [manager]);
+
+	return manager;
+};
 
 export const TimelineContextProvider: React.FC<{
 	readonly children: React.ReactNode;

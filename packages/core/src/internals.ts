@@ -123,7 +123,6 @@ import {
 	globalMediaResourceManager,
 	makeMediaResourceManager,
 	MEDIABUNNY_DURATION_VALUE_KEY,
-	useResourceManager,
 } from './media-resource-manager.js';
 import {playbackLogging} from './playback-logging.js';
 import {portalNode, setPortalNodeCurrentScale} from './portal-node.js';
@@ -206,6 +205,7 @@ import {
 	type PlaybackRateContextValue,
 	type SetTimelineContextValue,
 	type TimelineContextValue,
+	useResourceManager,
 } from './TimelineContext.js';
 import {truthy} from './truthy.js';
 import {useBuffering} from './use-buffering.js';
