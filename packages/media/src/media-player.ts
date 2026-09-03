@@ -571,10 +571,22 @@ export class MediaPlayer {
 		startTime: number,
 		nonce: Nonce,
 	): Promise<void> => {
-		const currentFrame = this.videoAsset?.getCurrentFrameAt(startTime);
-		if (currentFrame && this.mediaPresentation) {
-			await this.mediaPresentation.drawFrame(currentFrame);
+		if (!this.videoAsset || !this.mediaPresentation) {
 			return;
+		}
+
+		const exactFrame = this.videoAsset.getCurrentFrameAt(startTime);
+		if (exactFrame) {
+			await this.mediaPresentation.drawFrame(exactFrame);
+			return;
+		}
+
+		const retainedFrame = this.videoAsset.getCurrentFrame();
+		if (retainedFrame) {
+			await this.mediaPresentation.drawFrame(retainedFrame);
+			if (this.disposed) {
+				return;
+			}
 		}
 
 		await this.seekVideo({newTime: startTime, nonce});
