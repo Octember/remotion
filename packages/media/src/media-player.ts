@@ -23,13 +23,15 @@ import {acquireSharedInput} from './get-shared-input';
 import {calculateEndTime, getTimeInSeconds} from './get-time-in-seconds';
 import {resolveAudioTrack} from './helpers/resolve-audio-track';
 import {isNetworkError} from './is-type-of-error';
+import type {MediaPresentation} from './media-presentation';
+import {mediaPresentation} from './media-presentation';
 import type {Nonce, NonceManager} from './nonce-manager';
 import {makeNonceManager} from './nonce-manager';
 import {PremountAwareDelayPlayback} from './premount-aware-delay-playback';
 import type {MediaRequestInit} from './request-init';
 import type {SharedAudioContextForMediaPlayer} from './shared-audio-context-for-media-player';
-import type {VideoIteratorManager} from './video-iterator-manager';
-import {videoIteratorManager} from './video-iterator-manager';
+import type {VideoAsset} from './video-asset';
+import {videoAsset} from './video-asset';
 
 export type MediaPlayerInitResult =
 	| {type: 'success'; durationInSeconds: number}
@@ -58,7 +60,8 @@ export class MediaPlayer {
 	private sharedAudioContext: SharedAudioContextForMediaPlayer | null;
 
 	audioIteratorManager: AudioIteratorManager | null = null;
-	videoIteratorManager: VideoIteratorManager | null = null;
+	videoAsset: VideoAsset | null = null;
+	mediaPresentation: MediaPresentation | null = null;
 
 	private playing = false;
 	private loop = false;
@@ -344,7 +347,7 @@ export class MediaPlayer {
 					return {type: 'disposed'};
 				}
 
-				this.videoIteratorManager = await videoIteratorManager({
+				this.mediaPresentation = await mediaPresentation({
 					videoTrack,
 					delayPlaybackHandleIfNotPremounting:
 						this.delayPlaybackHandleIfNotPremounting,
@@ -353,12 +356,16 @@ export class MediaPlayer {
 					getOnVideoFrameCallback: () => this.onVideoFrameCallback,
 					logLevel: this.logLevel,
 					drawDebugOverlay: this.drawDebugOverlay,
+					getEffects: this.getEffects,
+					getEffectChainState: this.getEffectChainState,
+				});
+				this.videoAsset = videoAsset({
+					videoTrack,
+					presentation: this.mediaPresentation,
 					getLoopSegmentMediaEndTimestamp: () =>
 						this.getLoopSegmentMediaEndTimestamp(),
 					getStartTime: () => this.getStartTime(),
 					getIsLooping: () => this.loop,
-					getEffects: this.getEffects,
-					getEffectChainState: this.getEffectChainState,
 				});
 			}
 
@@ -429,8 +436,8 @@ export class MediaPlayer {
 									this.sharedAudioContext!.audioContext.currentTime,
 							})
 						: Promise.resolve(),
-					this.videoIteratorManager
-						? this.videoIteratorManager.startVideoIterator(startTime, nonce)
+					this.videoAsset
+						? this.videoAsset.startVideoIterator(startTime, nonce)
 						: Promise.resolve(),
 				]);
 			} catch (error) {
@@ -503,7 +510,7 @@ export class MediaPlayer {
 
 		try {
 			await Promise.all([
-				this.videoIteratorManager?.seek({
+				this.videoAsset?.seek({
 					newTime,
 					nonce,
 					fps: this.fps,
@@ -734,7 +741,7 @@ export class MediaPlayer {
 
 		// Mark all async operations as stale
 		this.nonceManager.createAsyncOperation();
-		this.videoIteratorManager?.destroy();
+		this.videoAsset?.destroy();
 		this.audioIteratorManager?.destroyIterator();
 		// Release our reference to the shared Input; it is only disposed once the
 		// last MediaPlayer using this src releases it.
@@ -852,7 +859,7 @@ export class MediaPlayer {
 	}
 
 	public async redrawVideoEffects(): Promise<void> {
-		await this.videoIteratorManager?.redrawCurrentFrame();
+		await this.mediaPresentation?.redrawCurrentFrame();
 	}
 
 	private drawDebugOverlay = () => {
@@ -865,7 +872,8 @@ export class MediaPlayer {
 				audioSyncAnchor: this.sharedAudioContext?.audioSyncAnchor ?? null,
 				audioIteratorManager: this.audioIteratorManager,
 				playing: this.playing,
-				videoIteratorManager: this.videoIteratorManager,
+				videoAsset: this.videoAsset,
+				mediaPresentation: this.mediaPresentation,
 				playbackRate: this.playbackRate * this.globalPlaybackRate,
 			});
 		}

@@ -6,9 +6,10 @@ import {
 	globalMediaCache,
 	keyframeManager,
 } from '../caches';
+import {mediaPresentation} from '../media-presentation';
 import {makeNonceManager} from '../nonce-manager';
+import {videoAsset} from '../video-asset';
 import {extractFrame} from '../video-extraction/extract-frame';
-import {videoIteratorManager} from '../video-iterator-manager';
 
 test('in preview, should properly buffer and draw frames', async (t) => {
 	if (t.task.file.projectName === 'webkit') {
@@ -26,7 +27,23 @@ test('in preview, should properly buffer and draw frames', async (t) => {
 		throw new Error('No video track found');
 	}
 
-	const manager = await videoIteratorManager({
+	const presentation = await mediaPresentation({
+		videoTrack,
+		delayPlaybackHandleIfNotPremounting: () => ({
+			unblock: () => {},
+			[Symbol.dispose]: () => {},
+		}),
+		context: null,
+		canvas: null,
+		drawDebugOverlay: () => {},
+		logLevel: 'info',
+		getOnVideoFrameCallback: () => null,
+		getEffects: () => [],
+		getEffectChainState: () => null,
+	});
+	const manager = videoAsset({
+		videoTrack,
+		presentation,
 		getIsLooping: () => false,
 		getLoopSegmentMediaEndTimestamp: () => {
 			throw new Error('not implemented');
@@ -34,18 +51,6 @@ test('in preview, should properly buffer and draw frames', async (t) => {
 		getStartTime: () => {
 			throw new Error('not implemented');
 		},
-		delayPlaybackHandleIfNotPremounting: () => ({
-			unblock: () => {},
-			[Symbol.dispose]: () => {},
-		}),
-		context: null,
-		canvas: null,
-		videoTrack,
-		drawDebugOverlay: () => {},
-		logLevel: 'info',
-		getOnVideoFrameCallback: () => null,
-		getEffects: () => [],
-		getEffectChainState: () => null,
 	});
 
 	const nonceManager = makeNonceManager();
