@@ -309,6 +309,7 @@ export const createVideoIterator = async (
 
 	return {
 		destroy,
+		getCurrentFrame: () => lastReturnedFrame,
 		initialFrame,
 		isDestroyed: () => {
 			return destroyed;

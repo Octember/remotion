@@ -36,6 +36,7 @@ export const mediaPresentation = async ({
 	let framesRendered = 0;
 	let currentDelayHandle: DelayPlaybackIfNotPremounting | null = null;
 	let lastDrawnFrame: WrappedCanvas | null = null;
+	let disposed = false;
 
 	if (canvas) {
 		const displayWidth = await videoTrack.getDisplayWidth();
@@ -47,6 +48,10 @@ export const mediaPresentation = async ({
 	}
 
 	const paintFrame = async (frame: WrappedCanvas): Promise<void> => {
+		if (disposed) {
+			return;
+		}
+
 		if (context && canvas) {
 			const effects = getEffects();
 			const chainState = getEffectChainState(canvas.width, canvas.height);
@@ -72,6 +77,10 @@ export const mediaPresentation = async ({
 
 	const drawFrame = async (frame: WrappedCanvas): Promise<void> => {
 		await paintFrame(frame);
+		if (disposed) {
+			return;
+		}
+
 		lastDrawnFrame = frame;
 		framesRendered++;
 		drawDebugOverlay();
@@ -91,11 +100,15 @@ export const mediaPresentation = async ({
 		},
 		drawFrame,
 		redrawCurrentFrame: async (): Promise<void> => {
-			if (!lastDrawnFrame) {
+			if (disposed || !lastDrawnFrame) {
 				return;
 			}
 
 			await paintFrame(lastDrawnFrame);
+			if (disposed || !lastDrawnFrame) {
+				return;
+			}
+
 			drawDebugOverlay();
 			getOnVideoFrameCallback()?.(lastDrawnFrame.canvas);
 
@@ -108,6 +121,7 @@ export const mediaPresentation = async ({
 			lastDrawnFrame = null;
 		},
 		dispose: () => {
+			disposed = true;
 			lastDrawnFrame = null;
 			currentDelayHandle?.unblock();
 			currentDelayHandle = null;

@@ -31,7 +31,6 @@ import {PremountAwareDelayPlayback} from './premount-aware-delay-playback';
 import type {MediaRequestInit} from './request-init';
 import type {SharedAudioContextForMediaPlayer} from './shared-audio-context-for-media-player';
 import type {VideoAsset} from './video-asset';
-import {videoAsset} from './video-asset';
 
 export type MediaPlayerInitResult =
 	| {type: 'success'; durationInSeconds: number}
@@ -91,6 +90,7 @@ export class MediaPlayer {
 
 	private premountAwareDelayPlayback: PremountAwareDelayPlayback;
 	private seekPromiseChain: Promise<unknown> = Promise.resolve();
+	private releaseVideoAsset: (() => void) | null = null;
 
 	constructor({
 		canvas,
@@ -174,14 +174,17 @@ export class MediaPlayer {
 		// Reuse a shared, reference-counted Input per (src, credentials,
 		// requestInit) so mounting a new range does not re-parse the container or
 		// cold-seek — the byte cache and demuxer state stay warm across ranges.
-		const {input, getDuration, release} = acquireSharedInput({
-			src: this.src,
-			credentials,
-			requestInit,
-			logLevel,
-		});
+		const {input, getDuration, acquireVideoAsset, release} = acquireSharedInput(
+			{
+				src: this.src,
+				credentials,
+				requestInit,
+				logLevel,
+			},
+		);
 		this.input = input;
 		this.getDuration = getDuration;
+		this.acquireVideoAsset = acquireVideoAsset;
 		this.releaseInput = release;
 		this.tagType = tagType;
 		this.getEffects = getEffects;
@@ -204,6 +207,10 @@ export class MediaPlayer {
 
 	private input: Input;
 	private getDuration: () => Promise<number>;
+	private acquireVideoAsset: ReturnType<
+		typeof acquireSharedInput
+	>['acquireVideoAsset'];
+
 	private releaseInput: () => void;
 	// Per-player disposal flag. The Input is now shared and reference counted, so
 	// `this.input.disposed` no longer tells us whether THIS player was disposed
@@ -270,6 +277,7 @@ export class MediaPlayer {
 		initialVolume: number,
 	): Promise<MediaPlayerInitResult> {
 		using _ = this.delayPlaybackHandleIfNotPremounting();
+		let videoAssetWasReused = false;
 		try {
 			if (this.isDisposalError()) {
 				return {type: 'disposed'};
@@ -359,9 +367,10 @@ export class MediaPlayer {
 					getEffects: this.getEffects,
 					getEffectChainState: this.getEffectChainState,
 				});
-				this.videoAsset = videoAsset({
-					videoTrack,
-				});
+				const videoAssetLease = this.acquireVideoAsset(videoTrack);
+				this.videoAsset = videoAssetLease.asset;
+				this.releaseVideoAsset = videoAssetLease.release;
+				videoAssetWasReused = videoAssetLease.reused;
 			}
 
 			const startTime = this.getTrimmedTime(startTimeUnresolved);
@@ -432,7 +441,9 @@ export class MediaPlayer {
 							})
 						: Promise.resolve(),
 					this.videoAsset
-						? this.startVideoIterator(startTime, nonce)
+						? videoAssetWasReused
+							? this.presentReusedVideoAsset(startTime, nonce)
+							: this.startVideoIterator(startTime, nonce)
 						: Promise.resolve(),
 				]);
 			} catch (error) {
@@ -473,8 +484,15 @@ export class MediaPlayer {
 		newTime: number,
 		unloopedNewTime: number,
 	) => {
+		if (this.disposed) {
+			return;
+		}
+
 		const nonce = this.nonceManager.createAsyncOperation();
 		await this.seekPromiseChain;
+		if (this.disposed) {
+			return;
+		}
 
 		this.seekPromiseChain = this.seekToDoNotCallDirectly(
 			newTime,
@@ -505,7 +523,7 @@ export class MediaPlayer {
 		this.mediaPresentation.clearCurrentFrame();
 		using _ = this.mediaPresentation.createDelayPlaybackHandle();
 		const frame = await this.videoAsset.startVideoIterator(timeToSeek, nonce);
-		if (frame) {
+		if (frame && !this.disposed) {
 			await this.mediaPresentation.drawFrame(frame);
 		}
 	};
@@ -517,7 +535,7 @@ export class MediaPlayer {
 		newTime: number;
 		nonce: Nonce;
 	}): Promise<void> => {
-		if (!this.videoAsset || !this.mediaPresentation) {
+		if (this.disposed || !this.videoAsset || !this.mediaPresentation) {
 			return;
 		}
 
@@ -531,6 +549,9 @@ export class MediaPlayer {
 			loopSegmentMediaEndTimestamp: this.getLoopSegmentMediaEndTimestamp(),
 			loopStartTime: this.getStartTime(),
 		});
+		if (this.disposed) {
+			return;
+		}
 
 		if (result.type === 'frame') {
 			await this.mediaPresentation.drawFrame(result.frame);
@@ -544,6 +565,19 @@ export class MediaPlayer {
 
 			await this.startVideoIterator(newTime, nonce);
 		}
+	};
+
+	private presentReusedVideoAsset = async (
+		startTime: number,
+		nonce: Nonce,
+	): Promise<void> => {
+		const currentFrame = this.videoAsset?.getCurrentFrameAt(startTime);
+		if (currentFrame && this.mediaPresentation) {
+			await this.mediaPresentation.drawFrame(currentFrame);
+			return;
+		}
+
+		await this.seekVideo({newTime: startTime, nonce});
 	};
 
 	private async seekToDoNotCallDirectly(
@@ -768,6 +802,11 @@ export class MediaPlayer {
 		}
 
 		this.disposed = true;
+		// Stop presentation work immediately, then wait for any initialization or
+		// seek that may still be acquiring the decoder before releasing its lease.
+		this.nonceManager.createAsyncOperation();
+		this.mediaPresentation?.dispose();
+		this.audioIteratorManager?.destroyIterator();
 
 		if (this.initializationPromise) {
 			try {
@@ -780,12 +819,20 @@ export class MediaPlayer {
 			}
 		}
 
-		// Mark all async operations as stale
-		this.nonceManager.createAsyncOperation();
-		this.mediaPresentation?.clearCurrentFrame();
-		this.videoAsset?.destroy();
 		this.mediaPresentation?.dispose();
 		this.audioIteratorManager?.destroyIterator();
+		try {
+			await this.seekPromiseChain;
+		} catch {
+			// Ignore seek errors during disposal
+		}
+
+		this.mediaPresentation?.dispose();
+
+		this.releaseVideoAsset?.();
+		this.releaseVideoAsset = null;
+		this.videoAsset = null;
+		this.mediaPresentation = null;
 		// Release our reference to the shared Input; it is only disposed once the
 		// last MediaPlayer using this src releases it.
 		this.releaseInput();

@@ -169,6 +169,11 @@ export const videoAsset = ({videoTrack}: {videoTrack: InputVideoTrack}) => {
 
 	return {
 		startVideoIterator,
+		getCurrentFrameAt: (time: number) =>
+			currentSeek !== null &&
+			roundTo4Digits(currentSeek) === roundTo4Digits(time)
+				? (videoFrameIterator?.getCurrentFrame() ?? null)
+				: null,
 		getVideoIteratorsCreated: () => videoIteratorsCreated,
 		seek,
 		destroy: () => {

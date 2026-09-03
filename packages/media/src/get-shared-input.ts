@@ -1,4 +1,4 @@
-import {ALL_FORMATS, Input, UrlSource} from 'mediabunny';
+import {ALL_FORMATS, Input, UrlSource, type InputVideoTrack} from 'mediabunny';
 import {Internals, type LogLevel} from 'remotion';
 import {getDurationOrCompute} from './get-duration-or-compute';
 import {getMaxSourceCacheSize} from './max-cache-size';
@@ -8,6 +8,18 @@ import {
 	resolveRequestInit,
 	type MediaRequestInit,
 } from './request-init';
+import {videoAsset, type VideoAsset} from './video-asset';
+
+type VideoAssetSlot = {
+	asset: VideoAsset;
+	leased: boolean;
+};
+
+type VideoAssetLease = {
+	asset: VideoAsset;
+	reused: boolean;
+	release: () => void;
+};
 
 // A single mediabunny `Input` (backed by one `UrlSource`) is expensive to spin
 // up for network media: on creation it must fetch and parse the container
@@ -49,6 +61,7 @@ export const acquireSharedInput = ({
 }): {
 	input: Input;
 	getDuration: () => Promise<number>;
+	acquireVideoAsset: (videoTrack: InputVideoTrack) => VideoAssetLease;
 	release: () => void;
 } => {
 	const normalizedRequestInit = normalizeMediaRequestInit(requestInit);
@@ -85,6 +98,39 @@ export const acquireSharedInput = ({
 			lease.getOrCreateValue(Internals.MEDIABUNNY_DURATION_VALUE_KEY, () =>
 				getDurationOrCompute(lease.resource),
 			),
+		acquireVideoAsset: (videoTrack) => {
+			const slots = lease.getOrCreateValue<VideoAssetSlot[]>(
+				`mediabunny-video-assets:${videoTrack.id}`,
+				() => [],
+			);
+			const idleSlot = slots.find((candidate) => !candidate.leased);
+			const slot =
+				idleSlot ??
+				({
+					asset: videoAsset({videoTrack}),
+					leased: false,
+				} satisfies VideoAssetSlot);
+
+			if (!idleSlot) {
+				slots.push(slot);
+			}
+
+			slot.leased = true;
+			let released = false;
+
+			return {
+				asset: slot.asset,
+				reused: idleSlot !== undefined,
+				release: () => {
+					if (released) {
+						return;
+					}
+
+					released = true;
+					slot.leased = false;
+				},
+			};
+		},
 		release: lease.release,
 	};
 };
