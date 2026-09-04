@@ -46,7 +46,7 @@ const {
 	usePreload,
 	SequenceContext,
 	useEffectChainState,
-	usePlaying,
+	Timeline,
 	useBuffering,
 	useTimelineContext,
 } = Internals;
@@ -133,7 +133,9 @@ const VideoForPreviewAssertedShowing: React.FC<
 	const [shouldFallbackToNativeVideo, setShouldFallbackToNativeVideo] =
 		useState(false);
 
-	const playing = usePlaying();
+	const [playing] = (
+		Timeline as unknown as {usePlayingState: () => [boolean]}
+	).usePlayingState();
 	const {playbackRate: globalPlaybackRate} = Internals.usePlaybackRate();
 	const sharedAudioContext = useContext(SharedAudioContext);
 	const buffer = useBufferState();
