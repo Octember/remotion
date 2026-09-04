@@ -2,55 +2,109 @@
 
 ## Simple Plan
 
-We fixed the big lifetime mistake first: the expensive media input now belongs
-to the Player/timeline resource manager instead of each short-lived
-`MediaPlayer`. The trace improved, but it still shows many `MediaPlayer`
-mounts/disposes while exact seeks are in flight. That means a newly mounted DOM
-canvas can still be empty until Mediabunny finishes the current `getCanvas()`
-request.
+### What the first attempt proved
 
-The next fix should be small:
+The expensive media input, track, and `CanvasSink` now correctly belong to the
+Player/timeline resource manager instead of each short-lived `MediaPlayer`.
+The trace improved and those objects survive presentation churn. The remaining
+black frames are not evidence that this lifetime change failed.
 
-1. Keep the owner we already introduced. The existing Player/timeline resource
-   manager owns one `VideoAsset` and one Mediabunny `CanvasSink` per source
-   track. Do not add another media registry or retain idle decoders.
-2. Behind the existing `_experimentalInitiallyDrawCachedFrame` switch, let a
-   `VideoAsset` keep one stable copy of its last useful raw frame. Replace the
-   old React `src`-keyed cache; track and media time belong with the asset, not
-   with component cleanup.
-3. Make the cache exact and race-safe. Store the requested media timestamp with
-   the copied pixels, and only reuse it for the same rounded request timestamp.
-   Give asset requests a generation so a late result from an old
-   `MediaPlayer` cannot overwrite a newer result for the shared asset.
-4. When a new `MediaPlayer` reaches the video track, paint an exact retained hit
-   through its current `MediaPresentation` before awaiting the new
-   `getCanvas()` request. Reapply effects there. On a miss, stay blank rather
-   than flash the wrong frame.
-5. Bound the copied pixels across the existing Player/timeline resource manager
-   with a small frame-count and byte budget. Evict the oldest retained frame
-   copies. Unregister and release a frame when its asset/input is invalidated,
-   and release every retained frame when that manager is disposed. This is a
-   presentation-pixel budget, not a decoder or timestamp cache.
-6. Log asset identity, requested timestamp, request generation, hit/miss,
-   decode, publish, paint, iterator close, mount/unmount, eviction, retained
-   bytes, and asset disposal. Add a debug-only next-frame visibility probe so a
-   black frame is classified as pre-track initialization, cache miss, stale
-   request, or pixels painted and then cleared.
+The failed assumption was that revisiting a decoded asset usually means asking
+for the same exact source timestamp. Scrubbing disproved that. A remounted
+presentation generally asks the same asset for a different nearby or distant
+timestamp, so the one retained frame fails an exact-timestamp lookup and the new
+canvas remains empty while Mediabunny decodes. We retained useful pixels but
+refused to present them.
+
+The first attempt also put a single request generation on the shared asset.
+That is the wrong concurrency boundary. Visible, premounted, and postmounted
+presentations may legitimately request the same asset at once. A request from
+one presentation must not make another presentation's successful decode
+ineligible for retention. Stale painting is already a presentation concern and
+belongs to that `MediaPlayer`'s nonce/disposal checks.
+
+### Revised plan
+
+1. Keep the ownership already introduced. The existing Player/timeline
+   resource manager owns one `VideoAsset` and one Mediabunny `CanvasSink` per
+   source track. Do not add another registry, decoder pool, timestamp cache, or
+   idle decoder lifetime.
+2. Keep one stable raw frame per recently used asset, bounded by the existing
+   aggregate three-frame/64 MB budget. The frame is a continuity placeholder,
+   not a claim that the requested exact frame is ready.
+3. Preserve continuity in this strict priority order: keep the current
+   presentation's pixels if it already drew a frame; otherwise paint the
+   asset's retained frame even when its timestamp differs from the target;
+   otherwise remain blank on the asset's first visit. Never replace valid
+   current-presentation pixels with an older asset placeholder. Apply the new
+   presentation's current effects and dimensions when a placeholder is needed.
+4. Start the normal exact `CanvasSink.getCanvas(timestamp)` request when paused,
+   or the normal sequential `CanvasSink.canvases(start, end)` operation when
+   playing, before awaiting placeholder paint. This starts decoding promptly
+   while preserving the ordering that the exact frame is committed after the
+   placeholder. Keep the existing delay/buffering handle blocked until the
+   actual requested frame is ready; placeholder paint must not signal decode
+   completion.
+5. Replace the placeholder only after the presentation's existing nonce and
+   disposal checks prove the result still belongs to that presentation. A late
+   result may neither paint over a newer seek nor invoke presentation callbacks.
+6. After a result passes those checks, paint it and publish a stable copy to the
+   shared asset. Remove the asset-wide request generation: concurrent valid
+   presentations may all complete, and whichever valid decode publishes last
+   becomes the next continuity placeholder.
+7. Give placeholder paint explicit semantics in `MediaPresentation`. It may
+   update the pixels used by effect redraws, but it must not increment the
+   decoded-frame count, invoke `onVideoFrame`, or release buffering. Only the
+   requested decoded frame uses the normal `drawFrame()` completion path.
+8. Preserve the exact-match distinction only for diagnostics. Emit
+   self-contained scalar logs rather than collapsed `Object` payloads. Log a
+   retained paint as `exact` or `placeholder`, along with retained and target
+   timestamps, delta, asset identity, presentation identity, request kind,
+   decode completion/cancellation, eviction, retained bytes, and disposal.
+   Never call a mismatched placeholder a cache hit or an exact frame.
+9. Dispose retained pixels through the existing resource registry: eviction
+   clears the owning asset's reference, input invalidation disposes that asset,
+   and Player/timeline teardown disposes the shared budget. `MediaPlayer`
+   disposal still clears only its destination canvas and active operations.
+
+### Non-negotiable invariants
+
+- A placeholder can only come from the same resource key and video track as the
+  requested frame. Credentials, request options, source revision, and track ID
+  remain part of that identity; pixels can never cross assets.
+- A placeholder is allowed to be temporally distant. That trade is explicit:
+  valid pixels from the correct asset are preferable to black. Exactness is
+  restored only by the requested decode.
+- Existing presentation pixels always outrank shared retained pixels. The
+  shared placeholder is only a bootstrap for a presentation that has not drawn
+  anything yet.
+- The decode operation starts without waiting for effects on the placeholder,
+  but the exact frame is always the final commit for that request.
+- Only a live presentation's current request may commit pixels. Disposal or a
+  newer seek makes earlier work ineligible before any draw, publish, callback,
+  or buffering transition.
+- Placeholder paint is presentation-only. It cannot mutate media time, satisfy
+  a seek, increment decoded-frame accounting, invoke `onVideoFrame`, or unblock
+  playback.
+- Retention remains bounded to one frame per retained asset and three frames/64
+  MB per Player resource manager. Eviction and teardown are deterministic.
+- Neither retaining nor painting a frame owns a Mediabunny iterator or decoder.
+  Retrieval-operation cleanup remains unchanged.
 
 Paused exact seeks remain `CanvasSink.getCanvas(timestamp)`. Continuous
 playback remains `CanvasSink.canvases(start, end)`, with its iterator closed on
 pause, jump, or unmount. Mediabunny still owns decoder creation and cleanup.
 
-Success is not "no black frame anywhere." First visits can still be blank, and
-so can seeks to times not safely covered by the one retained frame. Success is:
-returning to a recently decoded, safe target for an already visited track paints
-from the shared asset before the new exact seek finishes, and every remaining
-black frame is classified with evidence as pre-track initialization, retained
-frame miss, stale/cancelled request, or post-paint presentation cleanup.
+This deliberately chooses a temporarily stale frame from the correct source
+track over an empty black canvas. First visits can still be blank because the
+asset has no decoded pixels yet. After the first successful decode for an asset,
+presentation churn must not show black while a replacement frame is pending.
+The exact destination frame still arrives asynchronously and retains its normal
+buffering and callback semantics.
 
-If diagnostics show that most black frames are retained-frame misses, then the
-next step can be a tiny bounded timestamp cache. Do not build that until the
-one-frame-per-asset shape proves it is the real limiting factor.
+Do not add a multi-timestamp cache unless measurements later establish a
+separate need for faster exact-frame arrival. It is not needed to solve visual
+continuity, and it would reintroduce the cache design we are trying to avoid.
 
 - [Mediabunny guide: Media sinks](https://mediabunny.dev/guide/media-sinks)
 
@@ -192,55 +246,56 @@ Relevant implementation:
 
 ## Specific Diff: Mediabunny's Model vs Remotion's
 
-| Concern | Mediabunny's model | Remotion today | Target Remotion model |
-| --- | --- | --- | --- |
-| Durable track accessor | One cheap, reusable sink per track | Sink is buried inside a per-mounted-player iterator manager | Retain `Input` + track + `CanvasSink` in the Player resource manager |
-| Exact paused seek | `getCanvas(timestamp)` | Reuse or restart a sequential `canvases(timestamp)` iterator | Call `getCanvas(timestamp)`; latest request wins |
-| Continuous playback | `canvases(start, end)` | Correct primitive, wrapped by custom look-ahead and seek logic | Keep a playback-owned sequential iterator |
-| Sparse known targets | `canvasesAtTimestamps(timestamps)` | Not used by preview playback | Use for finite monotonic scrub/prefetch batches only |
-| Decoder lifetime | One retrieval operation | One retained sequential iterator, plus optional loop iterator | One active playback/read operation; never an idle retained decoder |
-| Random jump | Independent sink call | Destroy active iterator, construct another sequential iterator | End playback iterator if necessary, then perform exact retrieval |
-| Loop warm-up | Caller may start a second finite operation | Remotion prewarms and retains a second open sequential iterator | Preserve only if measurement proves it helps; scope it to the loop operation |
-| Presentation lifetime | Outside the sink | Coupled to sink and iterator in `videoIteratorManager` | `MediaPresentation` remains mount-scoped and independently disposable |
-| Stable displayed frame | Caller responsibility | Copies pooled output and retains current/peeked frames | Copy only frames that must survive pool reuse or operation completion |
-| Cleanup | Iterator completion/`return()` closes decoder | Custom `destroy()` eventually delegates to iterator `return()` | Operation owner always closes iterator; Player manager disposes `Input` |
-| Resource reuse | Reuse sink; calls are independent | Reuse an active iterator state machine | Reuse sink and container state, not decoder state |
+| Concern                | Mediabunny's model                            | Remotion today                                                  | Target Remotion model                                                        |
+| ---------------------- | --------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Durable track accessor | One cheap, reusable sink per track            | Sink is buried inside a per-mounted-player iterator manager     | Retain `Input` + track + `CanvasSink` in the Player resource manager         |
+| Exact paused seek      | `getCanvas(timestamp)`                        | Reuse or restart a sequential `canvases(timestamp)` iterator    | Call `getCanvas(timestamp)`; latest request wins per presentation            |
+| Continuous playback    | `canvases(start, end)`                        | Correct primitive, wrapped by custom look-ahead and seek logic  | Keep a playback-owned sequential iterator                                    |
+| Sparse known targets   | `canvasesAtTimestamps(timestamps)`            | Not used by preview playback                                    | Use for finite monotonic scrub/prefetch batches only                         |
+| Decoder lifetime       | One retrieval operation                       | One retained sequential iterator, plus optional loop iterator   | One active playback/read operation; never an idle retained decoder           |
+| Random jump            | Independent sink call                         | Destroy active iterator, construct another sequential iterator  | End playback iterator if necessary, then perform exact retrieval             |
+| Loop warm-up           | Caller may start a second finite operation    | Remotion prewarms and retains a second open sequential iterator | Preserve only if measurement proves it helps; scope it to the loop operation |
+| Presentation lifetime  | Outside the sink                              | Coupled to sink and iterator in `videoIteratorManager`          | `MediaPresentation` remains mount-scoped and independently disposable        |
+| Stable displayed frame | Caller responsibility                         | Copies pooled output and retains current/peeked frames          | Keep one bounded asset frame for empty-presentation continuity               |
+| Cleanup                | Iterator completion/`return()` closes decoder | Custom `destroy()` eventually delegates to iterator `return()`  | Operation owner always closes iterator; Player manager disposes `Input`      |
+| Resource reuse         | Reuse sink; calls are independent             | Reuse an active iterator state machine                          | Reuse sink and container state, not decoder state                            |
 
 ### Current branch versus the target
 
-The current branch correctly made two architectural moves:
+The current branch has the intended ownership shape:
 
-1. It split DOM/effects/callback work into mount-scoped `MediaPresentation`.
-2. It made the Player/timeline resource manager, rather than a module global,
-   own the shared `Input` lifetime.
+1. DOM, effects, callbacks, and current-presentation state are mount-scoped in
+   `MediaPresentation`.
+2. The Player/timeline resource manager owns the shared `Input`, track-scoped
+   `VideoAsset`, `CanvasSink`, and bounded retained-frame budget.
+3. Decoder-producing retrieval operations remain request/playback-scoped and
+   are not retained merely because the asset survives.
 
-Its `VideoAsset` experiment then went one step too far. It moved the existing
-`CanvasSink` plus active `VideoIterator`, loop-prewarm cache, current/peeked
-stable frames, and seek cursor into reusable slots stored beside the `Input`.
-Releasing a `MediaPlayer` only marks a slot idle; it does not destroy the
-iterator. This preserves a live decoder operation across DOM unmount, and
-multiple overlapping mounts allocate additional slots. Those idle slots have
-no eviction or destruction path until the entire resource manager disposes the
-`Input`.
-
-The specific correction is:
+The remaining correction is presentation policy, not another lifecycle
+refactor:
 
 ```diff
-- Player resource -> Input -> leased VideoAsset slots
-- VideoAsset -> CanvasSink + active VideoIterator + loop iterator cache
-- unmount -> mark VideoAsset idle, retain its decoder operation
-+ Player resource -> Input -> track-scoped CanvasSink
-+ mount -> MediaPresentation only
-+ paused exact seek -> CanvasSink.getCanvas(timestamp)
-+ playback -> operation-scoped CanvasSink.canvases(start, end)
-+ unmount/stop/jump -> iterator.return()
-+ Player teardown -> Input.dispose()
+- retained frame lookup requires exact timestamp
+- miss leaves a new presentation canvas empty
+- shared asset generation treats concurrent presentations as stale
++ retained frame always paints as a continuity placeholder
++ exact/sequential decode proceeds without changing buffering semantics
++ presentation nonce prevents stale paint
++ every still-valid completed decode may become the asset's next placeholder
 ```
 
-Keep `MediaPresentation`. Keep Player-scoped `Input` ownership. Replace
-`VideoAsset` slot leasing with one sink value per track. Move the current frame,
-seek cursor, playback iterator, loop operation, and cancellation nonce to the
-consumer operation that actually needs them. No decoder cache is introduced.
+No decoder cache or new registry is introduced.
+
+The implementation delta should stay local:
+
+- `VideoAsset`: expose the one retained frame and its timestamp; remove shared
+  request generations; retain only caller-validated decoded results.
+- `MediaPresentation`: distinguish `paintPlaceholder()` from `drawFrame()` and
+  expose whether this presentation already has pixels.
+- `MediaPlayer`: start the requested retrieval, preserve current pixels or
+  bootstrap from the asset, then nonce-check, draw, and publish the result.
+- `retained-video-frame-budget` and the core resource registry: no policy or
+  ownership changes.
 
 ## Browser Constraint
 
@@ -263,15 +318,15 @@ Relevant documentation:
 
 ## Retention Boundary
 
-| Resource | Lifetime | Cleanup owner |
-| --- | --- | --- |
-| `Input`, `UrlSource`, parsed metadata, byte cache | Player resource | Existing media resource manager calls `Input.dispose()` |
-| `InputVideoTrack` and `CanvasSink` | Same as their `Input` | Released with the `Input`; no decoder is held merely by retaining the sink |
-| `MediaPresentation` and destination canvas | Mounted `MediaPlayer` | `MediaPlayer.dispose()` |
-| Sequential `canvases()` iterator | One playback operation | Stop, jump, unmount, or normal iterator completion calls/causes `.return()` |
-| `getCanvas()` decoder operation | One exact-frame request | Mediabunny closes it when the finite request completes |
-| `canvasesAtTimestamps()` iterator | One finite sparse batch | Consumer completion, `break`, or `.return()` |
-| Copied stable canvas | Only while it is needed for presentation continuity | Owning presentation/operation returns it to the copy pool |
+| Resource                                          | Lifetime                                                 | Cleanup owner                                                               |
+| ------------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `Input`, `UrlSource`, parsed metadata, byte cache | Player resource                                          | Existing media resource manager calls `Input.dispose()`                     |
+| `InputVideoTrack` and `CanvasSink`                | Same as their `Input`                                    | Released with the `Input`; no decoder is held merely by retaining the sink  |
+| `MediaPresentation` and destination canvas        | Mounted `MediaPlayer`                                    | `MediaPlayer.dispose()`                                                     |
+| Sequential `canvases()` iterator                  | One playback operation                                   | Stop, jump, unmount, or normal iterator completion calls/causes `.return()` |
+| `getCanvas()` decoder operation                   | One exact-frame request                                  | Mediabunny closes it when the finite request completes                      |
+| `canvasesAtTimestamps()` iterator                 | One finite sparse batch                                  | Consumer completion, `break`, or `.return()`                                |
+| Copied stable canvas                              | Recently used asset, within the shared frame/byte budget | Asset disposal or budget eviction drops the stable copy                     |
 
 The intended ordering is:
 
@@ -296,7 +351,9 @@ Record these values per lifecycle event while validating the prototype:
 - Input count and configured cache bytes
 - copied-frame count and estimated pixel bytes
 - seek request time, first presented-frame time, and stale-request suppression
-- whether the previously presented frame remained visible while decoding
+- whether continuity paint was absent, exact, or a mismatched placeholder
+- placeholder timestamp, requested timestamp, and replacement latency
+- whether a placeholder incorrectly fired completion callbacks or unblocked playback
 
 The design is successful when repeated forward/backward boundary scrubbing:
 
@@ -304,7 +361,30 @@ The design is successful when repeated forward/backward boundary scrubbing:
 - never leaves an iterator open after its playback/read operation ends;
 - keeps the shared `Input` and sink identity stable across range mounts;
 - uses exact retrieval instead of a sequential iterator for paused random seeks;
-- keeps the previous pixels visible until the requested frame is ready;
+- after an asset's first decode, immediately paints retained pixels into every
+  new presentation and keeps them visible until the requested frame is ready;
+- never labels a mismatched placeholder as exact, never fires `onVideoFrame`
+  for it, and never lets it release the buffering handle;
+- rejects late decode results at the presentation boundary while allowing
+  concurrent valid presentations to update shared retained pixels;
 - releases all media resources at Player teardown; and
 - preserves playback, looping, audio synchronization, effects, cancellation,
   and exact-frame semantics.
+
+Before implementation is considered complete, exercise these cases directly:
+
+1. First visit to an asset: blank is allowed until its first decoded frame.
+2. Remount at the same timestamp: exact retained paint, then normal replacement.
+3. Remount at a different timestamp: stale placeholder appears immediately,
+   exact frame replaces it, and callbacks fire only for the exact frame.
+4. Seek within an already-painted presentation: its current pixels remain until
+   replacement; the shared placeholder does not overwrite them.
+5. Rapid A -> B -> C seek: neither A nor B may paint after C becomes current.
+6. Visible plus pre/postmounted consumers of one asset: all may decode without
+   invalidating one another; none may paint into another presentation.
+7. Effects change while a placeholder is visible: repaint uses current effects
+   without changing decode-completion accounting.
+8. Budget eviction and source invalidation: evicted pixels cannot be painted;
+   retained bytes return to zero on Player/timeline teardown.
+9. Playback, pause, loop, reverse/jump, fallback, and disposal: iterators close
+   exactly as before and no decoder operation survives its owner.
