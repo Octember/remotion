@@ -25,6 +25,7 @@ const {
 	usePreload,
 	SequenceContext,
 	Timeline,
+	usePlaying,
 	useBuffering,
 	useTimelineContext,
 } = Internals;
@@ -88,9 +89,11 @@ const AudioForPreviewAssertedShowing: React.FC<NewAudioForPreviewProps> = ({
 	const [shouldFallbackToNativeAudio, setShouldFallbackToNativeAudio] =
 		useState(false);
 
-	const [playing] = (
-		Timeline as unknown as {usePlayingState: () => [boolean]}
-	).usePlayingState();
+	const playing =
+		usePlaying?.() ??
+		(
+			Timeline as unknown as {usePlayingState: () => [boolean]}
+		).usePlayingState()[0];
 	const {playbackRate: globalPlaybackRate} = Internals.usePlaybackRate();
 	const sharedAudioContext = useContext(SharedAudioContext);
 	const buffer = useBufferState();

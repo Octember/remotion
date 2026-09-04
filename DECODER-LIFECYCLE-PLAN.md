@@ -1,35 +1,56 @@
 # Media Retention and Decoder Lifecycle
 
-## Plan
+## Simple Plan
 
-Use Mediabunny's media-sink lifecycle instead of inventing a Remotion-owned
-decoder cache.
+We fixed the big lifetime mistake first: the expensive media input now belongs
+to the Player/timeline resource manager instead of each short-lived
+`MediaPlayer`. The trace improved, but it still shows many `MediaPlayer`
+mounts/disposes while exact seeks are in flight. That means a newly mounted DOM
+canvas can still be empty until Mediabunny finishes the current `getCanvas()`
+request.
 
-1. Retain one `CanvasSink` per video track in the existing Player resource
-   manager. The durable media resource is the `Input`, track, and sink, not a
-   decoder or an active iterator.
-2. Use `getCanvas(timestamp)` for an isolated exact-frame seek.
-3. Use `canvases(startTime)` for continuous playback. The playback operation
-   owns this iterator and ends it with `break` or `.return()` when playback or
-   its presentation ends.
-4. Use `canvasesAtTimestamps(timestamps)` for a finite scrub or prefetch batch
-   when the target timestamps are known together.
-5. Let Mediabunny create and release the operation-scoped decoder. Do not keep
-   idle iterators or decoders alive, and do not add a decoder registry, TTL, or
-   LRU.
-6. Configure the sink's canvas pool to bound reusable output canvases. Copy any
-   pixels that must remain visible after a sink result is returned or its pool
-   entry is reused.
-7. Dispose the retained `Input` and sink resources only when their Player-level
-   resource entry is evicted or the Player is destroyed. Mounting and
-   unmounting a `MediaPlayer` only attaches and detaches presentation state.
+The next fix should be small:
 
-This follows Mediabunny's intended boundary: sinks are cheap, reusable,
-track-scoped accessors whose calls are independent, while async iterators own
-the decoder resources used by a particular read. Iterator completion performs
-decoder cleanup. The existing `VideoAsset` abstraction should therefore stop
-turning `CanvasSink.canvases()` into a persistent, manually managed decoder
-lifecycle.
+1. Keep the owner we already introduced. The existing Player/timeline resource
+   manager owns one `VideoAsset` and one Mediabunny `CanvasSink` per source
+   track. Do not add another media registry or retain idle decoders.
+2. Behind the existing `_experimentalInitiallyDrawCachedFrame` switch, let a
+   `VideoAsset` keep one stable copy of its last useful raw frame. Replace the
+   old React `src`-keyed cache; track and media time belong with the asset, not
+   with component cleanup.
+3. Make the cache exact and race-safe. Store the requested media timestamp with
+   the copied pixels, and only reuse it for the same rounded request timestamp.
+   Give asset requests a generation so a late result from an old
+   `MediaPlayer` cannot overwrite a newer result for the shared asset.
+4. When a new `MediaPlayer` reaches the video track, paint an exact retained hit
+   through its current `MediaPresentation` before awaiting the new
+   `getCanvas()` request. Reapply effects there. On a miss, stay blank rather
+   than flash the wrong frame.
+5. Bound the copied pixels across the existing Player/timeline resource manager
+   with a small frame-count and byte budget. Evict the oldest retained frame
+   copies. Unregister and release a frame when its asset/input is invalidated,
+   and release every retained frame when that manager is disposed. This is a
+   presentation-pixel budget, not a decoder or timestamp cache.
+6. Log asset identity, requested timestamp, request generation, hit/miss,
+   decode, publish, paint, iterator close, mount/unmount, eviction, retained
+   bytes, and asset disposal. Add a debug-only next-frame visibility probe so a
+   black frame is classified as pre-track initialization, cache miss, stale
+   request, or pixels painted and then cleared.
+
+Paused exact seeks remain `CanvasSink.getCanvas(timestamp)`. Continuous
+playback remains `CanvasSink.canvases(start, end)`, with its iterator closed on
+pause, jump, or unmount. Mediabunny still owns decoder creation and cleanup.
+
+Success is not "no black frame anywhere." First visits can still be blank, and
+so can seeks to times not safely covered by the one retained frame. Success is:
+returning to a recently decoded, safe target for an already visited track paints
+from the shared asset before the new exact seek finishes, and every remaining
+black frame is classified with evidence as pre-track initialization, retained
+frame miss, stale/cancelled request, or post-paint presentation cleanup.
+
+If diagnostics show that most black frames are retained-frame misses, then the
+next step can be a tiny bounded timestamp cache. Do not build that until the
+one-frame-per-asset shape proves it is the real limiting factor.
 
 - [Mediabunny guide: Media sinks](https://mediabunny.dev/guide/media-sinks)
 

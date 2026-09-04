@@ -98,6 +98,7 @@ export class MediaPlayer {
 	private videoFrameIterator: VideoIterator | null = null;
 	private currentVideoTime: number | null = null;
 	private videoIteratorsCreated = 0;
+	private retainVideoFrames: boolean;
 
 	constructor({
 		canvas,
@@ -126,6 +127,7 @@ export class MediaPlayer {
 		getEffects,
 		getEffectChainState,
 		mediaResourceManager,
+		retainVideoFrames = false,
 	}: {
 		canvas: HTMLCanvasElement | OffscreenCanvas | null;
 		src: string;
@@ -156,6 +158,7 @@ export class MediaPlayer {
 			height: number,
 		) => EffectChainState | null;
 		mediaResourceManager: typeof Internals.globalMediaResourceManager;
+		retainVideoFrames?: boolean;
 	}) {
 		this.canvas = canvas ?? null;
 		this.src = src;
@@ -197,6 +200,7 @@ export class MediaPlayer {
 		this.tagType = tagType;
 		this.getEffects = getEffects;
 		this.getEffectChainState = getEffectChainState;
+		this.retainVideoFrames = retainVideoFrames;
 
 		if (canvas) {
 			const context = canvas.getContext('2d', {
@@ -515,7 +519,18 @@ export class MediaPlayer {
 			return;
 		}
 
-		this.mediaPresentation.clearCurrentFrame();
+		const generation = this.retainVideoFrames
+			? this.videoAsset.beginRequest(timeToSeek)
+			: null;
+		const retainedFrame = this.retainVideoFrames
+			? this.videoAsset.getRetainedFrame(timeToSeek)
+			: null;
+		if (retainedFrame) {
+			await this.mediaPresentation.drawFrame(retainedFrame);
+		} else {
+			this.mediaPresentation.clearCurrentFrame();
+		}
+
 		using _ = this.mediaPresentation.createDelayPlaybackHandle();
 		this.videoFrameIterator?.destroy();
 		this.currentVideoTime = timeToSeek;
@@ -531,6 +546,14 @@ export class MediaPlayer {
 			!nonce.isStale() &&
 			!iterator.isDestroyed()
 		) {
+			if (generation !== null) {
+				this.videoAsset.publishFrame({
+					frame: iterator.initialFrame,
+					requestTimestamp: timeToSeek,
+					generation,
+				});
+			}
+
 			await this.mediaPresentation.drawFrame(iterator.initialFrame);
 		}
 	};
@@ -553,9 +576,27 @@ export class MediaPlayer {
 		this.videoFrameIterator?.destroy();
 		this.videoFrameIterator = null;
 		this.currentVideoTime = timeToSeek;
+		const generation = this.retainVideoFrames
+			? this.videoAsset.beginRequest(timeToSeek)
+			: null;
+		const retainedFrame = this.retainVideoFrames
+			? this.videoAsset.getRetainedFrame(timeToSeek)
+			: null;
+		if (retainedFrame) {
+			await this.mediaPresentation.drawFrame(retainedFrame);
+		}
+
 		using _ = this.mediaPresentation.createDelayPlaybackHandle();
 		const frame = await this.videoAsset.getCanvas(timeToSeek);
 		if (frame && !this.disposed && !nonce.isStale()) {
+			if (generation !== null) {
+				this.videoAsset.publishFrame({
+					frame,
+					requestTimestamp: timeToSeek,
+					generation,
+				});
+			}
+
 			await this.mediaPresentation.drawFrame(frame);
 		}
 	};
@@ -590,6 +631,9 @@ export class MediaPlayer {
 
 		const previousTime = this.currentVideoTime;
 		this.currentVideoTime = newTime;
+		const generation = this.retainVideoFrames
+			? this.videoAsset.beginRequest(newTime)
+			: null;
 		const maximumSequentialAdvance = Math.abs(this.playbackRate) / this.fps;
 		const isSequential =
 			previousTime !== null &&
@@ -602,6 +646,14 @@ export class MediaPlayer {
 		});
 
 		if (result.type === 'satisfied') {
+			if (generation !== null) {
+				this.videoAsset.publishFrame({
+					frame: result.frame,
+					requestTimestamp: newTime,
+					generation,
+				});
+			}
+
 			await this.mediaPresentation.drawFrame(result.frame);
 			return;
 		}

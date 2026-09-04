@@ -7,6 +7,7 @@ import {
 	keyframeManager,
 } from '../caches';
 import {makeNonceManager} from '../nonce-manager';
+import {makeRetainedVideoFrameBudget} from '../retained-video-frame-budget';
 import {videoAsset} from '../video-asset';
 import {extractFrame} from '../video-extraction/extract-frame';
 
@@ -26,7 +27,11 @@ test('in preview, should properly buffer and draw frames', async (t) => {
 		throw new Error('No video track found');
 	}
 
-	const asset = videoAsset({videoTrack});
+	const asset = videoAsset({
+		videoTrack,
+		frameBudget: makeRetainedVideoFrameBudget(),
+		logLevel: 'info',
+	});
 	for (const timestamp of [0, 1, 2]) {
 		expect(await asset.getCanvas(timestamp)).toBeNull();
 	}
