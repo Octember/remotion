@@ -1,6 +1,5 @@
 import type {AudioIteratorManager} from '../audio-iterator-manager';
 import type {MediaPresentation} from '../media-presentation';
-import type {VideoAsset} from '../video-asset';
 
 export const drawPreviewOverlay = ({
 	context,
@@ -9,7 +8,7 @@ export const drawPreviewOverlay = ({
 	audioSyncAnchor,
 	playing,
 	audioIteratorManager,
-	videoAsset,
+	videoIteratorsCreated,
 	mediaPresentation,
 	playbackRate,
 }: {
@@ -19,7 +18,7 @@ export const drawPreviewOverlay = ({
 	audioSyncAnchor: {value: number} | null;
 	playing: boolean;
 	audioIteratorManager: AudioIteratorManager | null;
-	videoAsset: VideoAsset | null;
+	videoIteratorsCreated: number;
 	mediaPresentation: MediaPresentation | null;
 	playbackRate: number;
 }) => {
@@ -28,7 +27,7 @@ export const drawPreviewOverlay = ({
 	// Collect all lines to be rendered
 	const lines: string[] = [
 		'Debug overlay',
-		`Video iterators created: ${videoAsset?.getVideoIteratorsCreated()}`,
+		`Video iterators created: ${videoIteratorsCreated}`,
 		`Audio iterators created: ${audioIteratorManager?.getAudioIteratorsCreated()}`,
 		`Audio scheduled: ${(audioIteratorManager?.getTotalAudioScheduledInSeconds() ?? 0).toFixed(3)}s`,
 		`Frames rendered: ${mediaPresentation?.getFramesRendered()}`,

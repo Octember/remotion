@@ -10,17 +10,6 @@ import {
 } from './request-init';
 import {videoAsset, type VideoAsset} from './video-asset';
 
-type VideoAssetSlot = {
-	asset: VideoAsset;
-	leased: boolean;
-};
-
-type VideoAssetLease = {
-	asset: VideoAsset;
-	reused: boolean;
-	release: () => void;
-};
-
 type MediaResourceManager = {
 	acquire: <T>(options: {
 		key: string;
@@ -74,7 +63,7 @@ export const acquireSharedInput = ({
 }): {
 	input: Input;
 	getDuration: () => Promise<number>;
-	acquireVideoAsset: (videoTrack: InputVideoTrack) => VideoAssetLease;
+	getVideoAsset: (videoTrack: InputVideoTrack) => VideoAsset;
 	release: () => void;
 } => {
 	const normalizedRequestInit = normalizeMediaRequestInit(requestInit);
@@ -111,39 +100,10 @@ export const acquireSharedInput = ({
 			lease.getOrCreateValue(Internals.MEDIABUNNY_DURATION_VALUE_KEY, () =>
 				getDurationOrCompute(lease.resource),
 			),
-		acquireVideoAsset: (videoTrack) => {
-			const slots = lease.getOrCreateValue<VideoAssetSlot[]>(
-				`mediabunny-video-assets:${videoTrack.id}`,
-				() => [],
-			);
-			const idleSlot = slots.find((candidate) => !candidate.leased);
-			const slot =
-				idleSlot ??
-				({
-					asset: videoAsset({videoTrack}),
-					leased: false,
-				} satisfies VideoAssetSlot);
-
-			if (!idleSlot) {
-				slots.push(slot);
-			}
-
-			slot.leased = true;
-			let released = false;
-
-			return {
-				asset: slot.asset,
-				reused: idleSlot !== undefined,
-				release: () => {
-					if (released) {
-						return;
-					}
-
-					released = true;
-					slot.leased = false;
-				},
-			};
-		},
+		getVideoAsset: (videoTrack) =>
+			lease.getOrCreateValue(`mediabunny-video-asset:${videoTrack.id}`, () =>
+				videoAsset({videoTrack}),
+			),
 		release: lease.release,
 	};
 };

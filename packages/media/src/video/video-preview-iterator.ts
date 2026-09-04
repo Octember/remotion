@@ -1,14 +1,18 @@
 import type {WrappedCanvas} from 'mediabunny';
 import {releaseStableFrame} from '../canvas-ahead-of-time';
+import type {CanvasAheadOfTimeIterator} from '../canvas-ahead-of-time';
 import {roundTo4Digits} from '../helpers/round-to-4-digits';
 import type {PrewarmedVideoIteratorCache} from '../prewarm-iterator-for-looping';
 
 export const createVideoIterator = async (
 	timeToSeek: number,
-	cache: PrewarmedVideoIteratorCache,
+	iteratorOrCache: CanvasAheadOfTimeIterator | PrewarmedVideoIteratorCache,
 ) => {
 	let destroyed = false;
-	const iterator = cache.makeIteratorOrUsePrewarmed(timeToSeek);
+	const iterator =
+		'makeIteratorOrUsePrewarmed' in iteratorOrCache
+			? iteratorOrCache.makeIteratorOrUsePrewarmed(timeToSeek)
+			: iteratorOrCache;
 	let iteratorEnded = false;
 
 	const firstAwait = iterator.next();

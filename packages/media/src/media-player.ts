@@ -22,6 +22,7 @@ import {drawPreviewOverlay} from './debug-overlay/preview-overlay';
 import {acquireSharedInput} from './get-shared-input';
 import {calculateEndTime, getTimeInSeconds} from './get-time-in-seconds';
 import {resolveAudioTrack} from './helpers/resolve-audio-track';
+import {roundTo4Digits} from './helpers/round-to-4-digits';
 import {isNetworkError} from './is-type-of-error';
 import type {MediaPresentation} from './media-presentation';
 import {mediaPresentation} from './media-presentation';
@@ -31,6 +32,10 @@ import {PremountAwareDelayPlayback} from './premount-aware-delay-playback';
 import type {MediaRequestInit} from './request-init';
 import type {SharedAudioContextForMediaPlayer} from './shared-audio-context-for-media-player';
 import type {VideoAsset} from './video-asset';
+import {
+	createVideoIterator,
+	type VideoIterator,
+} from './video/video-preview-iterator';
 
 export type MediaPlayerInitResult =
 	| {type: 'success'; durationInSeconds: number}
@@ -90,7 +95,9 @@ export class MediaPlayer {
 
 	private premountAwareDelayPlayback: PremountAwareDelayPlayback;
 	private seekPromiseChain: Promise<unknown> = Promise.resolve();
-	private releaseVideoAsset: (() => void) | null = null;
+	private videoFrameIterator: VideoIterator | null = null;
+	private currentVideoTime: number | null = null;
+	private videoIteratorsCreated = 0;
 
 	constructor({
 		canvas,
@@ -176,18 +183,16 @@ export class MediaPlayer {
 		// Reuse a shared, reference-counted Input per (src, credentials,
 		// requestInit) so mounting a new range does not re-parse the container or
 		// cold-seek — the byte cache and demuxer state stay warm across ranges.
-		const {input, getDuration, acquireVideoAsset, release} = acquireSharedInput(
-			{
-				src: this.src,
-				credentials,
-				requestInit,
-				logLevel,
-				mediaResourceManager,
-			},
-		);
+		const {input, getDuration, getVideoAsset, release} = acquireSharedInput({
+			src: this.src,
+			credentials,
+			requestInit,
+			logLevel,
+			mediaResourceManager,
+		});
 		this.input = input;
 		this.getDuration = getDuration;
-		this.acquireVideoAsset = acquireVideoAsset;
+		this.getVideoAsset = getVideoAsset;
 		this.releaseInput = release;
 		this.tagType = tagType;
 		this.getEffects = getEffects;
@@ -210,9 +215,7 @@ export class MediaPlayer {
 
 	private input: Input;
 	private getDuration: () => Promise<number>;
-	private acquireVideoAsset: ReturnType<
-		typeof acquireSharedInput
-	>['acquireVideoAsset'];
+	private getVideoAsset: ReturnType<typeof acquireSharedInput>['getVideoAsset'];
 
 	private releaseInput: () => void;
 	// Per-player disposal flag. The Input is now shared and reference counted, so
@@ -267,20 +270,12 @@ export class MediaPlayer {
 		});
 	}
 
-	private getLoopSegmentMediaEndTimestamp(): number {
-		return Math.min(
-			this.getMediaEndTimestamp(),
-			this.getSequenceEndTimestamp(),
-		);
-	}
-
 	private async _initialize(
 		startTimeUnresolved: number,
 		initialMuted: boolean,
 		initialVolume: number,
 	): Promise<MediaPlayerInitResult> {
 		using _ = this.delayPlaybackHandleIfNotPremounting();
-		let videoAssetWasReused = false;
 		try {
 			if (this.isDisposalError()) {
 				return {type: 'disposed'};
@@ -370,10 +365,7 @@ export class MediaPlayer {
 					getEffects: this.getEffects,
 					getEffectChainState: this.getEffectChainState,
 				});
-				const videoAssetLease = this.acquireVideoAsset(videoTrack);
-				this.videoAsset = videoAssetLease.asset;
-				this.releaseVideoAsset = videoAssetLease.release;
-				videoAssetWasReused = videoAssetLease.reused;
+				this.videoAsset = this.getVideoAsset(videoTrack);
 			}
 
 			const startTime = this.getTrimmedTime(startTimeUnresolved);
@@ -444,9 +436,9 @@ export class MediaPlayer {
 							})
 						: Promise.resolve(),
 					this.videoAsset
-						? videoAssetWasReused
-							? this.presentReusedVideoAsset(startTime, nonce)
-							: this.startVideoIterator(startTime, nonce)
+						? this.playing
+							? this.startVideoIterator(startTime, nonce)
+							: this.seekExactVideoFrame(startTime, nonce)
 						: Promise.resolve(),
 				]);
 			} catch (error) {
@@ -525,8 +517,45 @@ export class MediaPlayer {
 
 		this.mediaPresentation.clearCurrentFrame();
 		using _ = this.mediaPresentation.createDelayPlaybackHandle();
-		const frame = await this.videoAsset.startVideoIterator(timeToSeek, nonce);
-		if (frame && !this.disposed) {
+		this.videoFrameIterator?.destroy();
+		this.currentVideoTime = timeToSeek;
+		const iterator = await createVideoIterator(
+			timeToSeek,
+			this.videoAsset.canvases(timeToSeek),
+		);
+		this.videoIteratorsCreated++;
+		this.videoFrameIterator = iterator;
+		if (
+			iterator.initialFrame &&
+			!this.disposed &&
+			!nonce.isStale() &&
+			!iterator.isDestroyed()
+		) {
+			await this.mediaPresentation.drawFrame(iterator.initialFrame);
+		}
+	};
+
+	private seekExactVideoFrame = async (
+		timeToSeek: number,
+		nonce: Nonce,
+	): Promise<void> => {
+		if (this.disposed || !this.videoAsset || !this.mediaPresentation) {
+			return;
+		}
+
+		if (
+			this.currentVideoTime !== null &&
+			roundTo4Digits(this.currentVideoTime) === roundTo4Digits(timeToSeek)
+		) {
+			return;
+		}
+
+		this.videoFrameIterator?.destroy();
+		this.videoFrameIterator = null;
+		this.currentVideoTime = timeToSeek;
+		using _ = this.mediaPresentation.createDelayPlaybackHandle();
+		const frame = await this.videoAsset.getCanvas(timeToSeek);
+		if (frame && !this.disposed && !nonce.isStale()) {
 			await this.mediaPresentation.drawFrame(frame);
 		}
 	};
@@ -542,57 +571,44 @@ export class MediaPlayer {
 			return;
 		}
 
-		const result = await this.videoAsset.seek({
-			newTime,
-			nonce,
-			fps: this.fps,
-			playbackRate: this.playbackRate,
-			isPlaying: this.playing,
-			isLooping: this.loop,
-			loopSegmentMediaEndTimestamp: this.getLoopSegmentMediaEndTimestamp(),
-			loopStartTime: this.getStartTime(),
-		});
-		if (this.disposed) {
+		if (!this.playing) {
+			await this.seekExactVideoFrame(newTime, nonce);
 			return;
 		}
 
-		if (result.type === 'frame') {
+		if (!this.videoFrameIterator) {
+			await this.startVideoIterator(newTime, nonce);
+			return;
+		}
+
+		if (
+			this.currentVideoTime !== null &&
+			roundTo4Digits(this.currentVideoTime) === roundTo4Digits(newTime)
+		) {
+			return;
+		}
+
+		const previousTime = this.currentVideoTime;
+		this.currentVideoTime = newTime;
+		const maximumSequentialAdvance = Math.abs(this.playbackRate) / this.fps;
+		const isSequential =
+			previousTime !== null &&
+			newTime >= previousTime &&
+			roundTo4Digits(newTime - previousTime) <=
+				roundTo4Digits(maximumSequentialAdvance);
+		const result = await this.videoFrameIterator.tryToSatisfySeek(newTime, {
+			pendingFrameBehavior: isSequential ? 'wait' : 'restart-iterator',
+			shouldContinue: () => !nonce.isStale(),
+		});
+
+		if (result.type === 'satisfied') {
 			await this.mediaPresentation.drawFrame(result.frame);
 			return;
 		}
 
-		if (result.type === 'restart') {
-			if (this.disposed) {
-				return;
-			}
-
+		if (!nonce.isStale()) {
 			await this.startVideoIterator(newTime, nonce);
 		}
-	};
-
-	private presentReusedVideoAsset = async (
-		startTime: number,
-		nonce: Nonce,
-	): Promise<void> => {
-		if (!this.videoAsset || !this.mediaPresentation) {
-			return;
-		}
-
-		const exactFrame = this.videoAsset.getCurrentFrameAt(startTime);
-		if (exactFrame) {
-			await this.mediaPresentation.drawFrame(exactFrame);
-			return;
-		}
-
-		const retainedFrame = this.videoAsset.getCurrentFrame();
-		if (retainedFrame) {
-			await this.mediaPresentation.drawFrame(retainedFrame);
-			if (this.disposed) {
-				return;
-			}
-		}
-
-		await this.seekVideo({newTime: startTime, nonce});
 	};
 
 	private async seekToDoNotCallDirectly(
@@ -655,6 +671,8 @@ export class MediaPlayer {
 		}
 
 		this.playing = false;
+		this.videoFrameIterator?.destroy();
+		this.videoFrameIterator = null;
 		this.drawDebugOverlay();
 	}
 
@@ -822,6 +840,8 @@ export class MediaPlayer {
 		this.nonceManager.createAsyncOperation();
 		this.mediaPresentation?.dispose();
 		this.audioIteratorManager?.destroyIterator();
+		this.videoFrameIterator?.destroy();
+		this.videoFrameIterator = null;
 
 		if (this.initializationPromise) {
 			try {
@@ -844,8 +864,6 @@ export class MediaPlayer {
 
 		this.mediaPresentation?.dispose();
 
-		this.releaseVideoAsset?.();
-		this.releaseVideoAsset = null;
 		this.videoAsset = null;
 		this.mediaPresentation = null;
 		// Release our reference to the shared Input; it is only disposed once the
@@ -977,7 +995,7 @@ export class MediaPlayer {
 				audioSyncAnchor: this.sharedAudioContext?.audioSyncAnchor ?? null,
 				audioIteratorManager: this.audioIteratorManager,
 				playing: this.playing,
-				videoAsset: this.videoAsset,
+				videoIteratorsCreated: this.videoIteratorsCreated,
 				mediaPresentation: this.mediaPresentation,
 				playbackRate: this.playbackRate * this.globalPlaybackRate,
 			});
