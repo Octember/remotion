@@ -74,8 +74,9 @@ type Slot = {
 export const canvasesAheadOfTime = (
 	videoSink: CanvasSink,
 	startTimestamp?: number,
+	endTimestamp?: number,
 ) => {
-	const iterator = videoSink.canvases(startTimestamp);
+	const iterator = videoSink.canvases(startTimestamp, endTimestamp);
 
 	const buffer: Slot[] = [];
 	let chaining = false;

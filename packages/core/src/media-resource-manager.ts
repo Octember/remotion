@@ -4,12 +4,16 @@ type MediaResource = {
 	refCount: number;
 	disposeGeneration: number;
 	disposed: boolean;
-	values: Map<string, unknown>;
+	values: Map<string, {value: unknown; dispose?: () => void}>;
 };
 
 export type MediaResourceLease<T> = {
 	resource: T;
-	getOrCreateValue: <Value>(key: string, create: () => Value) => Value;
+	getOrCreateValue: <Value>(
+		key: string,
+		create: () => Value,
+		dispose?: (value: Value) => void,
+	) => Value;
 	release: () => void;
 };
 
@@ -31,11 +35,19 @@ const disposeResource = (resource: MediaResource) => {
 	}
 
 	resource.disposed = true;
+	for (const value of resource.values.values()) {
+		value.dispose?.();
+	}
+
 	resource.values.clear();
 	resource.dispose();
 };
 
-export const makeMediaResourceManager = (): MediaResourceManager => {
+export const makeMediaResourceManager = ({
+	disposeWhenUnused = true,
+}: {
+	disposeWhenUnused?: boolean;
+} = {}): MediaResourceManager => {
 	const resources = new Map<string, MediaResource>();
 	let disposed = false;
 
@@ -74,13 +86,17 @@ export const makeMediaResourceManager = (): MediaResourceManager => {
 				getOrCreateValue: <Value>(
 					valueKey: string,
 					createValue: () => Value,
+					disposeValue?: (value: Value) => void,
 				) => {
 					if (entry.values.has(valueKey)) {
-						return entry.values.get(valueKey) as Value;
+						return entry.values.get(valueKey)!.value as Value;
 					}
 
 					const value = createValue();
-					entry.values.set(valueKey, value);
+					entry.values.set(valueKey, {
+						value,
+						dispose: disposeValue ? () => disposeValue(value) : undefined,
+					});
 					return value;
 				},
 				release: () => {
@@ -90,7 +106,7 @@ export const makeMediaResourceManager = (): MediaResourceManager => {
 
 					released = true;
 					entry.refCount--;
-					if (entry.refCount !== 0) {
+					if (entry.refCount !== 0 || !disposeWhenUnused) {
 						return;
 					}
 

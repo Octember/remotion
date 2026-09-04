@@ -32,7 +32,6 @@ import type {
 	NativeVideoProps,
 	VideoObjectFit,
 } from './props';
-import {cacheVideoFrame, getCachedVideoFrame} from './video-frame-cache';
 import {warnAboutObjectFitInStyleOrClassName} from './warn-object-fit-css';
 
 const {
@@ -46,8 +45,10 @@ const {
 	usePreload,
 	SequenceContext,
 	useEffectChainState,
+	Timeline,
 	usePlaying,
 	useBuffering,
+	useTimelineContext,
 } = Internals;
 
 type VideoForPreviewProps = NativeVideoProps & {
@@ -117,6 +118,7 @@ const VideoForPreviewAssertedShowing: React.FC<
 	...props
 }) => {
 	const src = usePreload(unpreloadedSrc);
+	const {mediaResourceManager} = useTimelineContext();
 
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const videoConfig = useUnsafeVideoConfig();
@@ -131,10 +133,15 @@ const VideoForPreviewAssertedShowing: React.FC<
 	const [shouldFallbackToNativeVideo, setShouldFallbackToNativeVideo] =
 		useState(false);
 
-	const playing = usePlaying();
+	const playing =
+		usePlaying?.() ??
+		(
+			Timeline as unknown as {usePlayingState: () => [boolean]}
+		).usePlayingState()[0];
 	const {playbackRate: globalPlaybackRate} = Internals.usePlaybackRate();
 	const sharedAudioContext = useContext(SharedAudioContext);
 	const buffer = useBufferState();
+	const bufferingContext = useContext(Internals.BufferingContextReact);
 
 	const canvasRefCallback = useCallback(
 		(canvas: HTMLCanvasElement | null) => {
@@ -193,7 +200,15 @@ const VideoForPreviewAssertedShowing: React.FC<
 	// TODO: Consider Sequence hidden
 	const effectiveMuted = muted || playerMuted || userPreferredVolume <= 0;
 
-	const isPlayerBuffering = useBuffering();
+	const isPlayerBuffering =
+		useBuffering?.() ??
+		(
+			Internals as unknown as {
+				useIsPlayerBuffering: (
+					context: NonNullable<typeof bufferingContext>,
+				) => boolean;
+			}
+		).useIsPlayerBuffering(bufferingContext!);
 	const initialPlaying = useRef(playing && !isPlayerBuffering);
 	const initialIsPremounting = useRef(isPremounting);
 	const initialIsPostmounting = useRef(isPostmounting);
@@ -204,57 +219,6 @@ const VideoForPreviewAssertedShowing: React.FC<
 	const initialVolume = useRef(userPreferredVolume);
 	const initialSequenceDuration = useRef(videoConfig.durationInFrames);
 	const initialSequenceOffset = useRef(sequenceOffset);
-	const hasDrawnRealFrameRef = useRef(false);
-	const isPremountingRef = useRef(isPremounting);
-	isPremountingRef.current = isPremounting;
-
-	useLayoutEffect(() => {
-		if (!_experimentalInitiallyDrawCachedFrame) {
-			return;
-		}
-
-		const canvas = canvasRef.current;
-		if (!canvas) {
-			return;
-		}
-
-		const cached = getCachedVideoFrame(src);
-		if (!cached) {
-			return;
-		}
-
-		canvas.width = cached.width;
-		canvas.height = cached.height;
-		const ctx = canvas.getContext('2d', {
-			alpha: true,
-		});
-		if (!ctx) {
-			return;
-		}
-
-		ctx.drawImage(cached, 0, 0);
-	}, [_experimentalInitiallyDrawCachedFrame, src]);
-
-	useLayoutEffect(() => {
-		if (!_experimentalInitiallyDrawCachedFrame) {
-			return;
-		}
-
-		return () => {
-			const canvas = canvasRef.current;
-
-			if (
-				!canvas ||
-				!hasDrawnRealFrameRef.current ||
-				isPremountingRef.current
-			) {
-				return;
-			}
-
-			cacheVideoFrame(src, canvas);
-		};
-	}, [_experimentalInitiallyDrawCachedFrame, src]);
-
 	useEffect(() => {
 		const sharedAudioContextForMediaPlayer =
 			sharedAudioContext?.audioContext && sharedAudioContext.gainNode
@@ -295,6 +259,8 @@ const VideoForPreviewAssertedShowing: React.FC<
 				getEffects: () => effectsRef.current,
 				getEffectChainState: (width, height) =>
 					effectChainStateRef.current?.get(width, height)!,
+				mediaResourceManager,
+				retainVideoFrames: _experimentalInitiallyDrawCachedFrame,
 			});
 
 			mediaPlayerRef.current = player;
@@ -371,8 +337,6 @@ const VideoForPreviewAssertedShowing: React.FC<
 					if (result.type === 'success') {
 						setMediaPlayerReady(true);
 						setMediaDurationInSeconds(result.durationInSeconds);
-
-						hasDrawnRealFrameRef.current = true;
 					}
 				})
 				.catch((error) => {
@@ -434,13 +398,13 @@ const VideoForPreviewAssertedShowing: React.FC<
 
 			setMediaPlayerReady(false);
 			setShouldFallbackToNativeVideo(false);
-			hasDrawnRealFrameRef.current = false;
 		};
 	}, [
 		audioStreamIndex,
 		buffer,
 		debugOverlay,
 		disallowFallbackToOffthreadVideo,
+		_experimentalInitiallyDrawCachedFrame,
 		logLevel,
 		loop,
 		preloadedSrc,
@@ -449,6 +413,7 @@ const VideoForPreviewAssertedShowing: React.FC<
 		credentials,
 		initialRequestInit,
 		setMediaDurationInSeconds,
+		mediaResourceManager,
 	]);
 
 	warnAboutObjectFitInStyleOrClassName({style, className, logLevel});
@@ -603,3 +568,9 @@ export const VideoForPreview: React.FC<
 
 	return <VideoForPreviewAssertedShowing {...props} />;
 };
+
+export const PersistentVideoForPreview: React.FC<
+	VideoForPreviewProps & {
+		readonly controls: SequenceControls | undefined;
+	}
+> = (props) => <VideoForPreviewAssertedShowing {...props} />;

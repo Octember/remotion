@@ -255,6 +255,7 @@ const PlayerFn = <
 		() => Internals.createRuntimeValueStore({buffering: false}),
 		[],
 	);
+	const mediaResourceManager = Internals.useResourceManager();
 	const readIsPlaying = useCallback(
 		() => playingStore.store.getSnapshot().playing,
 		[playingStore],
@@ -429,8 +430,9 @@ const PlayerFn = <
 			frame,
 			isPlaying: readIsPlaying,
 			audioAndVideoTags,
+			mediaResourceManager,
 		};
-	}, [frame, readIsPlaying]);
+	}, [frame, mediaResourceManager, readIsPlaying]);
 
 	const playbackRateContextValue = useMemo((): PlaybackRateContextValue => {
 		return {

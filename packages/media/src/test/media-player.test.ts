@@ -1,3 +1,4 @@
+import {Internals} from 'remotion';
 import {expect, test, vi} from 'vitest';
 import {MediaPlayer} from '../media-player';
 import type {SharedAudioContextForMediaPlayer} from '../shared-audio-context-for-media-player';
@@ -62,6 +63,7 @@ const makeAudioPlayer = (
 		tagType: 'audio',
 		getEffects: () => [],
 		getEffectChainState: () => null,
+		mediaResourceManager: Internals.globalMediaResourceManager,
 	});
 };
 
@@ -165,6 +167,7 @@ test('dispose should immediately unblock playback delays', async () => {
 		tagType: 'video',
 		getEffects: () => [],
 		getEffectChainState: () => null,
+		mediaResourceManager: Internals.globalMediaResourceManager,
 	});
 
 	await player.initialize(0, false, 1);

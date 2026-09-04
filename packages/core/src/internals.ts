@@ -205,6 +205,7 @@ import {
 	type PlaybackRateContextValue,
 	type SetTimelineContextValue,
 	type TimelineContextValue,
+	useResourceManager,
 } from './TimelineContext.js';
 import {truthy} from './truthy.js';
 import {useBuffering} from './use-buffering.js';
@@ -303,6 +304,7 @@ export const Internals = {
 	getMediabunnyInputResourceKey,
 	globalMediaResourceManager,
 	makeMediaResourceManager,
+	useResourceManager,
 	MEDIABUNNY_DURATION_VALUE_KEY,
 	makeRenderResourceManager,
 	RenderResourceManagerContext,

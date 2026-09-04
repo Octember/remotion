@@ -89,6 +89,7 @@ const ThumbnailFn = <
 		() => Internals.createRuntimeValueStore({buffering: false}),
 		[],
 	);
+	const mediaResourceManager = Internals.useResourceManager();
 
 	const timelineState: TimelineContextValue = useMemo(() => {
 		const value: TimelineContextValue = {
@@ -97,10 +98,11 @@ const ThumbnailFn = <
 				[PLAYER_COMP_ID]: frameToDisplay,
 			},
 			audioAndVideoTags,
+			mediaResourceManager,
 		};
 
 		return value;
-	}, [frameToDisplay]);
+	}, [frameToDisplay, mediaResourceManager]);
 
 	const playbackRateContext: PlaybackRateContextValue = useMemo(() => {
 		return {

@@ -13,7 +13,7 @@ import {getLoopDisplay} from '../show-in-timeline';
 import {validateToneFrequency} from '../validate-tone-frequency';
 import {getVideoSequenceDuration} from './get-video-sequence-duration';
 import type {InnerVideoProps, VideoProps} from './props';
-import {VideoForPreview} from './video-for-preview';
+import {PersistentVideoForPreview, VideoForPreview} from './video-for-preview';
 import {VideoForRendering} from './video-for-rendering';
 
 const {
@@ -74,6 +74,7 @@ const InnerVideo: React.FC<
 		readonly controls: SequenceControls | undefined;
 		readonly setMediaDurationInSeconds: (durationInSeconds: number) => void;
 		readonly refForOutline: React.RefObject<HTMLElement | null>;
+		readonly persistent: boolean;
 	}
 > = ({
 	src,
@@ -107,6 +108,7 @@ const InnerVideo: React.FC<
 	effects,
 	setMediaDurationInSeconds,
 	refForOutline,
+	persistent,
 	...props
 }) => {
 	const environment = useRemotionEnvironment();
@@ -173,8 +175,12 @@ const InnerVideo: React.FC<
 		);
 	}
 
+	const PreviewComponent = persistent
+		? PersistentVideoForPreview
+		: VideoForPreview;
+
 	return (
-		<VideoForPreview
+		<PreviewComponent
 			{...props}
 			setMediaDurationInSeconds={setMediaDurationInSeconds}
 			audioStreamIndex={audioStreamIndex ?? 0}
@@ -210,6 +216,115 @@ const InnerVideo: React.FC<
 		/>
 	);
 };
+
+const ExperimentalPersistentVideoInner: React.FC<
+	VideoProps & {readonly controls: SequenceControls | undefined}
+> = ({
+	src,
+	audioStreamIndex,
+	className,
+	delayRenderRetries,
+	delayRenderTimeoutInMilliseconds,
+	disallowFallbackToOffthreadVideo,
+	fallbackOffthreadVideoProps,
+	logLevel,
+	loop,
+	loopVolumeCurveBehavior,
+	muted,
+	onVideoFrame,
+	playbackRate,
+	showInTimeline,
+	style,
+	trimAfter,
+	trimBefore,
+	volume,
+	toneFrequency,
+	debugOverlay,
+	headless,
+	onError,
+	credentials,
+	requestInit,
+	controls,
+	objectFit,
+	_experimentalInitiallyDrawCachedFrame,
+	effects,
+	cropLeft,
+	cropRight,
+	cropTop,
+	cropBottom,
+	...props
+}) => {
+	const sourceStack = controls
+		? (Internals.getStackForControls(controls) ?? undefined)
+		: undefined;
+	const fallbackLogLevel = Internals.useLogLevel();
+	const memoizedEffects = Internals.useMemoizedEffects({
+		effects: effects ?? [],
+		overrideId: controls?.overrideId ?? null,
+	});
+	const croppedStyle = useCropStyle({
+		cropLeft,
+		cropRight,
+		cropTop,
+		cropBottom,
+		style: style ?? null,
+		componentName: '<ExperimentalPersistentVideo />',
+	});
+	const [, setMediaDurationInSeconds] = useState<number | null>(null);
+	const refForOutline = React.useRef<HTMLElement | null>(null);
+
+	return (
+		<InnerVideo
+			{...props}
+			audioStreamIndex={audioStreamIndex ?? 0}
+			className={className}
+			delayRenderRetries={delayRenderRetries ?? null}
+			delayRenderTimeoutInMilliseconds={
+				delayRenderTimeoutInMilliseconds ?? null
+			}
+			disallowFallbackToOffthreadVideo={
+				disallowFallbackToOffthreadVideo ?? false
+			}
+			fallbackOffthreadVideoProps={fallbackOffthreadVideoProps ?? {}}
+			logLevel={logLevel ?? fallbackLogLevel}
+			loop={loop ?? false}
+			loopVolumeCurveBehavior={loopVolumeCurveBehavior ?? 'repeat'}
+			muted={muted ?? false}
+			onVideoFrame={onVideoFrame}
+			playbackRate={playbackRate ?? 1}
+			showInTimeline={showInTimeline ?? false}
+			src={src}
+			style={croppedStyle ?? {}}
+			trimAfter={trimAfter}
+			trimBefore={trimBefore}
+			volume={volume ?? 1}
+			toneFrequency={toneFrequency ?? 1}
+			_remotionInternalStack={sourceStack}
+			debugOverlay={debugOverlay ?? false}
+			headless={headless ?? false}
+			onError={onError}
+			credentials={credentials}
+			requestInit={requestInit}
+			controls={controls}
+			objectFit={objectFit ?? 'contain'}
+			_experimentalInitiallyDrawCachedFrame={
+				_experimentalInitiallyDrawCachedFrame ?? false
+			}
+			effects={memoizedEffects}
+			setMediaDurationInSeconds={setMediaDurationInSeconds}
+			refForOutline={refForOutline}
+			persistent
+		/>
+	);
+};
+
+export const ExperimentalPersistentVideo = Interactive.withSchema({
+	Component: ExperimentalPersistentVideoInner,
+	componentName: '<ExperimentalPersistentVideo>',
+	componentIdentity: 'dev.remotion.media.ExperimentalPersistentVideo',
+	schema: videoSchema,
+	supportsEffects: true,
+});
 
 const VideoInner: React.FC<
 	VideoProps & {
@@ -431,6 +546,7 @@ const VideoInner: React.FC<
 					effects={memoizedEffects}
 					setMediaDurationInSeconds={setMediaDurationInSeconds}
 					refForOutline={refForOutline}
+					persistent={false}
 				/>
 			</Sequence>
 		</Freeze>

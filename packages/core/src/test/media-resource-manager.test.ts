@@ -74,3 +74,27 @@ test('shares active media resources and their computed values', async () => {
 	await Promise.resolve();
 	expect(disposals).toBe(3);
 });
+
+test('can retain unused resources until the manager is disposed', async () => {
+	const manager = makeMediaResourceManager({disposeWhenUnused: false});
+	let disposals = 0;
+	const firstLease = manager.acquire({
+		key: 'video.mp4',
+		create: () => ({resource: {}, dispose: () => disposals++}),
+	});
+
+	firstLease.release();
+	await Promise.resolve();
+	const secondLease = manager.acquire({
+		key: 'video.mp4',
+		create: () => {
+			throw new Error('Resource should be retained');
+		},
+	});
+
+	expect(secondLease.resource).toBe(firstLease.resource);
+	expect(disposals).toBe(0);
+	secondLease.release();
+	manager.dispose();
+	expect(disposals).toBe(1);
+});

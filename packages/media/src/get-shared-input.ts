@@ -1,4 +1,4 @@
-import {ALL_FORMATS, Input, UrlSource} from 'mediabunny';
+import {ALL_FORMATS, Input, UrlSource, type InputVideoTrack} from 'mediabunny';
 import {Internals, type LogLevel} from 'remotion';
 import {getDurationOrCompute} from './get-duration-or-compute';
 import {getMaxSourceCacheSize} from './max-cache-size';
@@ -8,6 +8,29 @@ import {
 	resolveRequestInit,
 	type MediaRequestInit,
 } from './request-init';
+import {
+	makeRetainedVideoFrameBudget,
+	type RetainedVideoFrameBudget,
+} from './retained-video-frame-budget';
+import {videoAsset, type VideoAsset} from './video-asset';
+
+type MediaResourceManager = {
+	acquire: <T>(options: {
+		key: string;
+		create: () => {resource: T; dispose: () => void};
+	}) => {
+		resource: T;
+		getOrCreateValue: <Value>(
+			key: string,
+			create: () => Value,
+			dispose?: (value: Value) => void,
+		) => Value;
+		release: () => void;
+	};
+};
+
+const RETAINED_VIDEO_FRAME_BUDGET_KEY =
+	'mediabunny-retained-video-frame-budget';
 
 // A single mediabunny `Input` (backed by one `UrlSource`) is expensive to spin
 // up for network media: on creation it must fetch and parse the container
@@ -41,14 +64,17 @@ export const acquireSharedInput = ({
 	credentials,
 	requestInit,
 	logLevel,
+	mediaResourceManager,
 }: {
 	src: string;
 	credentials: RequestCredentials | undefined;
 	requestInit: MediaRequestInit | undefined;
 	logLevel: LogLevel;
+	mediaResourceManager: MediaResourceManager;
 }): {
 	input: Input;
 	getDuration: () => Promise<number>;
+	getVideoAsset: (videoTrack: InputVideoTrack) => VideoAsset;
 	release: () => void;
 } => {
 	const normalizedRequestInit = normalizeMediaRequestInit(requestInit);
@@ -62,7 +88,15 @@ export const acquireSharedInput = ({
 		credentials,
 		requestInit: normalizedRequestInit,
 	});
-	const lease = Internals.globalMediaResourceManager.acquire<Input>({
+	const frameBudgetLease =
+		mediaResourceManager.acquire<RetainedVideoFrameBudget>({
+			key: RETAINED_VIDEO_FRAME_BUDGET_KEY,
+			create: () => {
+				const frameBudget = makeRetainedVideoFrameBudget();
+				return {resource: frameBudget, dispose: frameBudget.dispose};
+			},
+		});
+	const lease = mediaResourceManager.acquire<Input>({
 		key: cacheKey,
 		create: () => {
 			const input = new Input({
@@ -85,6 +119,20 @@ export const acquireSharedInput = ({
 			lease.getOrCreateValue(Internals.MEDIABUNNY_DURATION_VALUE_KEY, () =>
 				getDurationOrCompute(lease.resource),
 			),
-		release: lease.release,
+		getVideoAsset: (videoTrack) =>
+			lease.getOrCreateValue(
+				`mediabunny-video-asset:${videoTrack.id}`,
+				() =>
+					videoAsset({
+						videoTrack,
+						frameBudget: frameBudgetLease.resource,
+						logLevel,
+					}),
+				(asset) => asset.dispose(),
+			),
+		release: () => {
+			lease.release();
+			frameBudgetLease.release();
+		},
 	};
 };

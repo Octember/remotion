@@ -2,11 +2,16 @@ import type {RefObject} from 'react';
 import React, {
 	createContext,
 	useCallback,
+	useEffect,
 	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
 } from 'react';
+import {
+	makeMediaResourceManager,
+	type MediaResourceManager,
+} from './media-resource-manager.js';
 import {createRuntimeValueStore} from './runtime-value-store.js';
 import {
 	getInitialFrameState,
@@ -18,6 +23,7 @@ export type TimelineContextValue = {
 	frame: Record<string, number>;
 	isPlaying: () => boolean;
 	audioAndVideoTags: RefObject<PlayableMediaTag[]>;
+	mediaResourceManager: MediaResourceManager;
 };
 
 export type PlaybackRateContextValue = {
@@ -72,6 +78,18 @@ export const AbsoluteTimeContext = createContext<TimelineContextValue | null>(
 	null,
 );
 
+export const useResourceManager = () => {
+	const [manager] = useState(() =>
+		makeMediaResourceManager({disposeWhenUnused: false}),
+	);
+
+	useEffect(() => {
+		return () => manager.dispose();
+	}, [manager]);
+
+	return manager;
+};
+
 export const TimelineContextProvider: React.FC<{
 	readonly children: React.ReactNode;
 	readonly frameState: Record<string, number> | null;
@@ -84,6 +102,7 @@ export const TimelineContextProvider: React.FC<{
 		() => createRuntimeValueStore({buffering: false}),
 		[],
 	);
+	const mediaResourceManager = useResourceManager();
 
 	const [playbackRate, setPlaybackRate] = useState(1);
 	const audioAndVideoTags = useRef<PlayableMediaTag[]>([]);
@@ -146,8 +165,9 @@ export const TimelineContextProvider: React.FC<{
 			frame,
 			isPlaying: readIsPlaying,
 			audioAndVideoTags,
+			mediaResourceManager,
 		};
-	}, [frame, readIsPlaying]);
+	}, [frame, mediaResourceManager, readIsPlaying]);
 
 	const playbackRateContextValue = useMemo((): PlaybackRateContextValue => {
 		return {

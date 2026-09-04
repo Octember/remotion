@@ -1,4 +1,4 @@
-import type {TimelineContextValue} from 'remotion';
+import {Internals, type TimelineContextValue} from 'remotion';
 import {ID} from './id.js';
 
 export const makeTimelineContext = (frame: number): TimelineContextValue => {
@@ -8,5 +8,6 @@ export const makeTimelineContext = (frame: number): TimelineContextValue => {
 		},
 		isPlaying: () => false,
 		audioAndVideoTags: {current: []},
+		mediaResourceManager: Internals.globalMediaResourceManager,
 	};
 };

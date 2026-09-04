@@ -1,182 +1,95 @@
-import type {InputVideoTrack, WrappedCanvas} from 'mediabunny';
+import type {AnyIterable, InputVideoTrack, WrappedCanvas} from 'mediabunny';
 import {CanvasSink} from 'mediabunny';
-import {roundTo4Digits} from './helpers/round-to-4-digits';
-import type {Nonce} from './nonce-manager';
-import {makePrewarmedVideoIteratorCache} from './prewarm-iterator-for-looping';
-import {
-	createVideoIterator,
-	type VideoIterator,
-} from './video/video-preview-iterator';
+import {Internals, type LogLevel} from 'remotion';
+import {canvasesAheadOfTime} from './canvas-ahead-of-time';
+import type {RetainedVideoFrameBudget} from './retained-video-frame-budget';
 
-export const isSequentialMediaTimeAdvance = ({
-	previousTime,
-	newTime,
-	fps,
-	playbackRate,
-	isPlaying,
+let nextVideoAssetId = 0;
+
+export const videoAsset = ({
+	videoTrack,
+	frameBudget,
+	logLevel,
 }: {
-	previousTime: number;
-	newTime: number;
-	fps: number;
-	playbackRate: number;
-	isPlaying: boolean;
+	videoTrack: InputVideoTrack;
+	frameBudget: RetainedVideoFrameBudget;
+	logLevel: LogLevel;
 }) => {
-	if (!isPlaying || newTime < previousTime) {
-		return false;
-	}
-
-	const maximumSequentialAdvance = Math.abs(playbackRate) / fps;
-	return (
-		roundTo4Digits(newTime - previousTime) <=
-		roundTo4Digits(maximumSequentialAdvance)
-	);
-};
-
-export const videoAsset = ({videoTrack}: {videoTrack: InputVideoTrack}) => {
-	let videoIteratorsCreated = 0;
-	let videoFrameIterator: VideoIterator | null = null;
-	let currentSeek: number | null = null;
-
+	const assetId = ++nextVideoAssetId;
+	const budgetKey = {};
+	let retainedFrame: WrappedCanvas | null = null;
 	const canvasSink = new CanvasSink(videoTrack, {
-		// Match the preview look-ahead buffer size. CanvasSink may reuse pooled
-		// canvas objects for later decoded frames, so Remotion copies pixels into
-		// stable canvases before retaining frames across seeks/peeks.
 		poolSize: 3,
 		fit: 'contain',
 		alpha: true,
 	});
-
-	const prewarmedVideoIteratorCache =
-		makePrewarmedVideoIteratorCache(canvasSink);
-
-	const startVideoIterator = async (
-		timeToSeek: number,
-		nonce: Nonce,
-	): Promise<WrappedCanvas | null> => {
-		videoFrameIterator?.destroy();
-		currentSeek = timeToSeek;
-
-		const iterator = await createVideoIterator(
-			timeToSeek,
-			prewarmedVideoIteratorCache,
-		);
-		videoIteratorsCreated++;
-		videoFrameIterator = iterator;
-
-		if (iterator.isDestroyed()) {
-			return null;
-		}
-
-		if (nonce.isStale()) {
-			// During a paused scrub, every seek goes stale before its decode
-			// lands, so returning undrawn would discard every frame and freeze
-			// the preview. Painting is safe: the newer seek always lands last.
-			if (!videoFrameIterator.isDestroyed() && iterator.initialFrame) {
-				return iterator.initialFrame;
-			}
-
-			return null;
-		}
-
-		if (videoFrameIterator.isDestroyed()) {
-			return null;
-		}
-
-		if (!iterator.initialFrame) {
-			// media ended
-			return null;
-		}
-
-		return iterator.initialFrame;
+	const clearRetainedFrame = () => {
+		retainedFrame = null;
 	};
 
-	const seek = async ({
-		newTime,
-		nonce,
-		fps,
-		playbackRate,
-		isPlaying,
-		isLooping,
-		loopSegmentMediaEndTimestamp,
-		loopStartTime,
-	}: {
-		newTime: number;
-		nonce: Nonce;
-		fps: number;
-		playbackRate: number;
-		isPlaying: boolean;
-		isLooping: boolean;
-		loopSegmentMediaEndTimestamp: number;
-		loopStartTime: number;
-	}): Promise<
-		{type: 'frame'; frame: WrappedCanvas} | {type: 'restart'} | {type: 'none'}
-	> => {
-		if (!videoFrameIterator) {
-			return {type: 'none'};
-		}
-
-		if (
-			currentSeek !== null &&
-			roundTo4Digits(currentSeek) === roundTo4Digits(newTime)
-		) {
-			return {type: 'none'};
-		}
-
-		const previousTime = currentSeek;
-		currentSeek = newTime;
-
-		if (isLooping) {
-			// If less than 1 second from the end away, we pre-warm a new iterator
-			if (loopSegmentMediaEndTimestamp - newTime < 1) {
-				prewarmedVideoIteratorCache.prewarmIteratorForLooping({
-					timeToSeek: loopStartTime,
-				});
-			}
-		}
-
-		const pendingFrameBehavior =
-			previousTime !== null &&
-			isSequentialMediaTimeAdvance({
-				previousTime,
-				newTime,
-				fps,
-				playbackRate,
-				isPlaying,
-			})
-				? 'wait'
-				: 'restart-iterator';
-		const videoSatisfyResult = await videoFrameIterator.tryToSatisfySeek(
-			newTime,
-			{
-				pendingFrameBehavior,
-				shouldContinue: () => !nonce.isStale(),
-			},
+	const log = (message: string) =>
+		Internals.Log.trace(
+			{logLevel, tag: '@remotion/media'},
+			`[VideoAsset ${assetId}] ${message}`,
 		);
-
-		// Doing this before the staleness check, because
-		// frame might be better than what we currently have
-		// TODO: check if this is actually true
-		if (videoSatisfyResult.type === 'satisfied') {
-			return {type: 'frame', frame: videoSatisfyResult.frame};
+	const copyFrame = (frame: WrappedCanvas) => {
+		const canvas = new OffscreenCanvas(frame.canvas.width, frame.canvas.height);
+		const context = canvas.getContext('2d');
+		if (!context) {
+			throw new Error('Could not create canvas context');
 		}
 
-		if (nonce.isStale()) {
-			return {type: 'none'};
-		}
-
-		return {type: 'restart'};
+		context.drawImage(frame.canvas, 0, 0);
+		return {...frame, canvas};
 	};
 
 	return {
-		startVideoIterator,
-		getVideoIteratorsCreated: () => videoIteratorsCreated,
-		seek,
-		destroy: () => {
-			prewarmedVideoIteratorCache.destroy();
-			videoFrameIterator?.destroy();
-			videoFrameIterator = null;
+		getRetainedFrame: () => retainedFrame,
+		publishFrame: (frame: WrappedCanvas) => {
+			const copied = copyFrame(frame);
+			const bytes = copied.canvas.width * copied.canvas.height * 4;
+			retainedFrame = copied;
+			const retained = frameBudget.retain({
+				key: budgetKey,
+				bytes,
+				clear: clearRetainedFrame,
+			});
+			if (!retained) {
+				retainedFrame = null;
+			}
+
+			const usage = frameBudget.getUsage();
+			log(
+				`published timestamp=${frame.timestamp.toFixed(3)}s retained=${retained} frames=${usage.frames} bytes=${usage.bytes}`,
+			);
 		},
-		getVideoFrameIterator: () => videoFrameIterator,
+		getCanvas: async (timestamp: number) => {
+			const frame = await canvasSink.getCanvas(timestamp);
+			if (!frame) {
+				return null;
+			}
+
+			const canvas = new OffscreenCanvas(
+				frame.canvas.width,
+				frame.canvas.height,
+			);
+			const context = canvas.getContext('2d');
+			if (!context) {
+				throw new Error('Could not create canvas context');
+			}
+
+			context.drawImage(frame.canvas, 0, 0);
+			return {...frame, canvas};
+		},
+		canvases: (startTimestamp?: number, endTimestamp?: number) =>
+			canvasesAheadOfTime(canvasSink, startTimestamp, endTimestamp),
+		canvasesAtTimestamps: (timestamps: AnyIterable<number>) =>
+			canvasSink.canvasesAtTimestamps(timestamps),
+		dispose: () => {
+			frameBudget.release(budgetKey);
+			clearRetainedFrame();
+			log('disposed');
+		},
 	};
 };
 

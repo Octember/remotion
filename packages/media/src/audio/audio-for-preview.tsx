@@ -24,8 +24,10 @@ const {
 	warnAboutTooHighVolume,
 	usePreload,
 	SequenceContext,
+	Timeline,
 	usePlaying,
 	useBuffering,
+	useTimelineContext,
 } = Internals;
 
 type NewAudioForPreviewProps = {
@@ -87,10 +89,16 @@ const AudioForPreviewAssertedShowing: React.FC<NewAudioForPreviewProps> = ({
 	const [shouldFallbackToNativeAudio, setShouldFallbackToNativeAudio] =
 		useState(false);
 
-	const playing = usePlaying();
+	const playing =
+		usePlaying?.() ??
+		(
+			Timeline as unknown as {usePlayingState: () => [boolean]}
+		).usePlayingState()[0];
 	const {playbackRate: globalPlaybackRate} = Internals.usePlaybackRate();
 	const sharedAudioContext = useContext(SharedAudioContext);
 	const buffer = useBufferState();
+	const {mediaResourceManager} = useTimelineContext();
+	const bufferingContext = useContext(Internals.BufferingContextReact);
 
 	const [playerMuted] = usePlayerMutedState();
 	const [mediaVolume] = useMediaVolumeState();
@@ -129,7 +137,15 @@ const AudioForPreviewAssertedShowing: React.FC<NewAudioForPreviewProps> = ({
 
 	const effectiveMuted = muted || playerMuted || userPreferredVolume <= 0;
 
-	const isPlayerBuffering = useBuffering();
+	const isPlayerBuffering =
+		useBuffering?.() ??
+		(
+			Internals as unknown as {
+				useIsPlayerBuffering: (
+					context: NonNullable<typeof bufferingContext>,
+				) => boolean;
+			}
+		).useIsPlayerBuffering(bufferingContext!);
 	const initialPlaying = useRef(playing && !isPlayerBuffering);
 	const initialIsPremounting = useRef(isPremounting);
 	const initialIsPostmounting = useRef(isPostmounting);
@@ -214,6 +230,7 @@ const AudioForPreviewAssertedShowing: React.FC<NewAudioForPreviewProps> = ({
 				tagType: 'audio',
 				getEffects: () => [],
 				getEffectChainState: () => null,
+				mediaResourceManager,
 			});
 
 			mediaPlayerRef.current = player;
@@ -363,6 +380,7 @@ const AudioForPreviewAssertedShowing: React.FC<NewAudioForPreviewProps> = ({
 		credentials,
 		initialRequestInit,
 		setMediaDurationInSeconds,
+		mediaResourceManager,
 	]);
 
 	if (shouldFallbackToNativeAudio && !disallowFallbackToHtml5Audio) {
