@@ -139,6 +139,7 @@ const VideoForPreviewAssertedShowing: React.FC<
 	const {playbackRate: globalPlaybackRate} = Internals.usePlaybackRate();
 	const sharedAudioContext = useContext(SharedAudioContext);
 	const buffer = useBufferState();
+	const bufferingContext = useContext(Internals.BufferingContextReact);
 
 	const canvasRefCallback = useCallback(
 		(canvas: HTMLCanvasElement | null) => {
@@ -197,7 +198,15 @@ const VideoForPreviewAssertedShowing: React.FC<
 	// TODO: Consider Sequence hidden
 	const effectiveMuted = muted || playerMuted || userPreferredVolume <= 0;
 
-	const isPlayerBuffering = useBuffering();
+	const isPlayerBuffering =
+		useBuffering?.() ??
+		(
+			Internals as unknown as {
+				useIsPlayerBuffering: (
+					context: NonNullable<typeof bufferingContext>,
+				) => boolean;
+			}
+		).useIsPlayerBuffering(bufferingContext!);
 	const initialPlaying = useRef(playing && !isPlayerBuffering);
 	const initialIsPremounting = useRef(isPremounting);
 	const initialIsPostmounting = useRef(isPostmounting);
