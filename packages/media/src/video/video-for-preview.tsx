@@ -568,3 +568,9 @@ export const VideoForPreview: React.FC<
 
 	return <VideoForPreviewAssertedShowing {...props} />;
 };
+
+export const PersistentVideoForPreview: React.FC<
+	VideoForPreviewProps & {
+		readonly controls: SequenceControls | undefined;
+	}
+> = (props) => <VideoForPreviewAssertedShowing {...props} />;

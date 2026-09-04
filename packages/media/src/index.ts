@@ -1,5 +1,5 @@
 import {Audio} from './audio/audio';
-import {Video} from './video/video';
+import {ExperimentalPersistentVideo, Video} from './video/video';
 /**
  * @deprecated Now just `Audio`
  */
@@ -20,4 +20,4 @@ export {
 	VideoProps,
 } from './video/props';
 export {getTargetSampleRate} from './convert-audiodata/resample-audiodata';
-export {Audio, Video};
+export {Audio, ExperimentalPersistentVideo, Video};
