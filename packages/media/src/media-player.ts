@@ -511,6 +511,25 @@ export class MediaPlayer {
 		await this.seekToWithQueue(newTime, time);
 	}
 
+	private paintRetainedFrameIfEmpty = async (targetTimestamp: number) => {
+		if (
+			!this.retainVideoFrames ||
+			!this.videoAsset ||
+			!this.mediaPresentation ||
+			this.mediaPresentation.hasCurrentFrame()
+		) {
+			return;
+		}
+
+		const retainedFrame = this.videoAsset.getRetainedFrame();
+		if (retainedFrame) {
+			await this.mediaPresentation.paintPlaceholder(
+				retainedFrame,
+				targetTimestamp,
+			);
+		}
+	};
+
 	private startVideoIterator = async (
 		timeToSeek: number,
 		nonce: Nonce,
@@ -519,39 +538,27 @@ export class MediaPlayer {
 			return;
 		}
 
-		const generation = this.retainVideoFrames
-			? this.videoAsset.beginRequest(timeToSeek)
-			: null;
-		const retainedFrame = this.retainVideoFrames
-			? this.videoAsset.getRetainedFrame(timeToSeek)
-			: null;
-		if (retainedFrame) {
-			await this.mediaPresentation.drawFrame(retainedFrame);
-		} else {
-			this.mediaPresentation.clearCurrentFrame();
-		}
-
 		using _ = this.mediaPresentation.createDelayPlaybackHandle();
 		this.videoFrameIterator?.destroy();
 		this.currentVideoTime = timeToSeek;
-		const iterator = await createVideoIterator(
+		const iteratorPromise = createVideoIterator(
 			timeToSeek,
 			this.videoAsset.canvases(timeToSeek),
 		);
+		const [iterator] = await Promise.all([
+			iteratorPromise,
+			this.paintRetainedFrameIfEmpty(timeToSeek),
+		]);
+		if (this.disposed || nonce.isStale() || iterator.isDestroyed()) {
+			iterator.destroy();
+			return;
+		}
+
 		this.videoIteratorsCreated++;
 		this.videoFrameIterator = iterator;
-		if (
-			iterator.initialFrame &&
-			!this.disposed &&
-			!nonce.isStale() &&
-			!iterator.isDestroyed()
-		) {
-			if (generation !== null) {
-				this.videoAsset.publishFrame({
-					frame: iterator.initialFrame,
-					requestTimestamp: timeToSeek,
-					generation,
-				});
+		if (iterator.initialFrame) {
+			if (this.retainVideoFrames) {
+				this.videoAsset.publishFrame(iterator.initialFrame);
 			}
 
 			await this.mediaPresentation.drawFrame(iterator.initialFrame);
@@ -576,25 +583,15 @@ export class MediaPlayer {
 		this.videoFrameIterator?.destroy();
 		this.videoFrameIterator = null;
 		this.currentVideoTime = timeToSeek;
-		const generation = this.retainVideoFrames
-			? this.videoAsset.beginRequest(timeToSeek)
-			: null;
-		const retainedFrame = this.retainVideoFrames
-			? this.videoAsset.getRetainedFrame(timeToSeek)
-			: null;
-		if (retainedFrame) {
-			await this.mediaPresentation.drawFrame(retainedFrame);
-		}
-
 		using _ = this.mediaPresentation.createDelayPlaybackHandle();
-		const frame = await this.videoAsset.getCanvas(timeToSeek);
+		const framePromise = this.videoAsset.getCanvas(timeToSeek);
+		const [frame] = await Promise.all([
+			framePromise,
+			this.paintRetainedFrameIfEmpty(timeToSeek),
+		]);
 		if (frame && !this.disposed && !nonce.isStale()) {
-			if (generation !== null) {
-				this.videoAsset.publishFrame({
-					frame,
-					requestTimestamp: timeToSeek,
-					generation,
-				});
+			if (this.retainVideoFrames) {
+				this.videoAsset.publishFrame(frame);
 			}
 
 			await this.mediaPresentation.drawFrame(frame);
@@ -631,9 +628,6 @@ export class MediaPlayer {
 
 		const previousTime = this.currentVideoTime;
 		this.currentVideoTime = newTime;
-		const generation = this.retainVideoFrames
-			? this.videoAsset.beginRequest(newTime)
-			: null;
 		const maximumSequentialAdvance = Math.abs(this.playbackRate) / this.fps;
 		const isSequential =
 			previousTime !== null &&
@@ -646,12 +640,12 @@ export class MediaPlayer {
 		});
 
 		if (result.type === 'satisfied') {
-			if (generation !== null) {
-				this.videoAsset.publishFrame({
-					frame: result.frame,
-					requestTimestamp: newTime,
-					generation,
-				});
+			if (this.disposed || nonce.isStale()) {
+				return;
+			}
+
+			if (this.retainVideoFrames) {
+				this.videoAsset.publishFrame(result.frame);
 			}
 
 			await this.mediaPresentation.drawFrame(result.frame);
