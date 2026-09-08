@@ -58,6 +58,12 @@ test('uses the supported version for unversioned catalogued packages', () => {
 	expect(getPackageInstallSpec({name: 'mediabunny', version: null})).toMatch(
 		/^mediabunny@\d/,
 	);
+	expect(
+		getPackageInstallSpec({
+			name: '@huggingface/transformers',
+			version: null,
+		}),
+	).toBe('@huggingface/transformers@4.2.0');
 });
 
 test('lets the package manager resolve other unversioned packages', () => {

@@ -222,7 +222,7 @@ const CloseupPlaceholder = () => {
 		}
 	});
 	await context.route(
-		'https://www.remotion.dev/elements?remotion-studio=true',
+		'https://www.remotion.dev/elements?remotion-studio=true&docusaurus-theme=dark',
 		async (route) => {
 			officialLibraryRequests.push(route.request().url());
 			await route.fulfill({
@@ -232,7 +232,7 @@ const CloseupPlaceholder = () => {
 		},
 	);
 	await context.route(
-		`${externalLibraryUrl}?remotion-studio=true`,
+		`${externalLibraryUrl}?remotion-studio=true&docusaurus-theme=dark`,
 		async (route) => {
 			externalLibraryRequests.push(route.request().url());
 			await route.fulfill({
@@ -311,7 +311,7 @@ const CloseupPlaceholder = () => {
 		);
 		await expect(officialElementsIframe).toBeVisible();
 		expect(officialLibraryRequests).toEqual([
-			'https://www.remotion.dev/elements?remotion-studio=true',
+			'https://www.remotion.dev/elements?remotion-studio=true&docusaurus-theme=dark',
 		]);
 		expect(context.pages()).toHaveLength(2);
 		await studioPage.keyboard.press('Escape');
@@ -339,7 +339,7 @@ const CloseupPlaceholder = () => {
 		);
 		await expect(elementsIframe).toHaveAttribute('credentialless', '');
 		expect(externalLibraryRequests).toEqual([
-			`${externalLibraryUrl}?remotion-studio=true`,
+			`${externalLibraryUrl}?remotion-studio=true&docusaurus-theme=dark`,
 		]);
 		expect(context.pages()).toHaveLength(2);
 		const elementsFrame = studioPage.frameLocator(
@@ -377,6 +377,14 @@ const CloseupPlaceholder = () => {
 		await expect(elementsIframe).toHaveCount(0);
 		expect(studioProtocolRequests).toEqual([]);
 		await dialog.getByRole('button', {name: /Install/}).click();
+		await expect(
+			studioPage
+				.getByRole('group', {name: 'Inspector source location'})
+				.first(),
+		).toContainText('Protocol Element', {timeout: 30_000});
+		await expect(
+			studioPage.getByText('Installed Protocol Element', {exact: true}),
+		).toBeVisible();
 
 		const elementFile = path.join(
 			temporaryProject,
@@ -502,9 +510,15 @@ const CloseupPlaceholder = () => {
 		await expect(studioPage).toHaveURL(/ProtocolElementScene/, {
 			timeout: 30_000,
 		});
+		await expect(
+			studioPage
+				.getByRole('group', {name: 'Inspector source location'})
+				.first(),
+		).toContainText('Protocol Element', {timeout: 30_000});
 
 		await studioPage.bringToFront();
-		await studioPage.mouse.click(500, 300);
+		await studioPage.keyboard.press('Escape');
+		await expect(browseElements).toBeVisible();
 		await expect
 			.poll(() =>
 				fetch(`${studioUrl}/api/studio-protocol`, {
