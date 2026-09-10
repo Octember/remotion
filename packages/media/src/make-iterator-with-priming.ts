@@ -20,7 +20,7 @@ export async function* makeIteratorWithPriming({
 	timeToSeek: number;
 	maximumTimestamp: number;
 }): AsyncGenerator<AudioBufferSlice, void, unknown> {
-	const primingStart = Math.max(0, timeToSeek - AUDIO_PRIMING_SECONDS);
+	const primingStart = timeToSeek - AUDIO_PRIMING_SECONDS;
 	const iterator = audioSink.buffers(primingStart, maximumTimestamp);
 
 	for await (const buffer of iterator) {

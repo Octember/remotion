@@ -173,6 +173,31 @@ test('one-pass iterator does not wrap', async () => {
 	expect(chunks.map((chunk) => chunk.rawTimestamp)).toEqual([8, 9]);
 });
 
+test('one-pass iterator decodes negative-timestamp AAC priming packets', async () => {
+	let requestedStart: number | null = null;
+	const audioSink = {
+		async *buffers(start: number) {
+			requestedStart = start;
+			yield {
+				timestamp: -0.02,
+				duration: 0.04,
+				buffer: null,
+			} as unknown as WrappedAudioBuffer;
+		},
+	} as unknown as AudioBufferSink;
+
+	const iterator = makeIteratorWithPriming({
+		audioSink,
+		timeToSeek: 0,
+		maximumTimestamp: 1,
+	});
+	const chunk = await iterator.next();
+
+	expect(requestedStart).toBe(-0.5);
+	expect(chunk.done).toBe(false);
+	expect(chunk.value?.sourceOffsetInSeconds).toBe(0.02);
+});
+
 test('scheduler trimming is additional to the source slice offset', () => {
 	const sourceOffsetInSeconds = 0.013;
 	const offset = getTrimStartForAudioNode({
