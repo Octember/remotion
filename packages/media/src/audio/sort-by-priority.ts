@@ -29,9 +29,13 @@ const drain = Effect.scoped(
 				wake = null;
 			}),
 		);
-		wake = () => PubSub.publishUnsafe(changes, null);
-
 		let running: Waiter | null = null;
+		wake = () => {
+			if (running === null || running.getPriority() === null) {
+				PubSub.publishUnsafe(changes, null);
+			}
+		};
+
 		while (waiters.length > 0 || running) {
 			if (running && running.getPriority() !== null) {
 				const completion = yield* nextChange;
