@@ -110,6 +110,28 @@ test('completion is emitted once and preserves the last frame', async () => {
 	);
 });
 
+test.each([false, true])(
+	'surfaces completion errors and releases the clock with a reentrant control signal: %s',
+	async (reentrant) => {
+		const f = fixture();
+		f.options.lastFrame = 0;
+		const exit = await Effect.runPromiseExit(
+			playbackClock({
+				...f.options,
+				onEnded: () => {
+					if (reentrant) {
+						document.dispatchEvent(new Event('visibilitychange'));
+					}
+
+					throw new Error('completion failed');
+				},
+			}),
+		);
+		expect(String(exit)).toContain('Die(Error: completion failed)');
+		expect(f.listeners.size).toBe(0);
+	},
+);
+
 test('visibility and buffering changes cancel the pending paint without a jump', async () => {
 	const request = globalThis.requestAnimationFrame;
 	const cancel = globalThis.cancelAnimationFrame;
@@ -182,6 +204,16 @@ test('visibility and buffering changes cancel the pending paint without a jump',
 				f.buffer(false);
 				yield* TestClock.adjust(0);
 				expect(frames.size).toBe(1);
+				const commit = f.options.setFrame;
+				f.options.setFrame = (frame) => {
+					commit(frame);
+					Effect.runFork(Fiber.interrupt(fiber));
+				};
+
+				yield* TestClock.adjust(100);
+				paintOnce();
+				yield* TestClock.adjust(0);
+				expect(frames.size).toBe(0);
 				yield* Fiber.interrupt(fiber);
 				expect(frames.size).toBe(0);
 				expect(f.listeners.size).toBe(0);

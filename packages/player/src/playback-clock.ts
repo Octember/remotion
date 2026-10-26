@@ -26,21 +26,88 @@ type PlaybackClockOptions = {
 export const playbackClock = Effect.fnUntraced(
 	function* (options: PlaybackClockOptions) {
 		const changes = yield* Effect.acquireRelease(
-			PubSub.sliding<void>(1),
+			PubSub.unbounded<Effect.Effect<void>>(),
 			PubSub.shutdown,
 		);
-		const nextTick = PubSub.take(yield* PubSub.subscribe(changes));
-		const changed = () => PubSub.publishUnsafe(changes, undefined);
+		const nextTick = Effect.flatten(
+			PubSub.take(yield* PubSub.subscribe(changes)),
+		);
+		const changed = () => {
+			// Finish native callbacks before control signals can close their scope.
+			queueMicrotask(() => PubSub.publishUnsafe(changes, Effect.void));
+		};
+
 		let paint: number | null = null;
+		const clock = yield* Clock.Clock;
+		let started = clock.monotonicTimeNanosUnsafe();
+		let framesAdvanced = 0;
+		let audioFailed = false;
+		let ended = false;
+		const advance = () => {
+			if (!options.isPlaying()) {
+				options.audio?.suspend();
+				return;
+			}
+
+			if (options.isBuffering()) {
+				return;
+			}
+
+			if (!options.muted && !audioFailed) {
+				options.audio?.resume();
+			}
+
+			const now = clock.monotonicTimeNanosUnsafe();
+			const currentFrame = options.getCurrentFrame();
+			const {nextFrame, framesToAdvance, hasEnded} = calculateNextFrame({
+				time: Number(now - started) / 1_000_000,
+				currentFrame,
+				playbackSpeed: options.playbackRate,
+				fps: options.fps,
+				actualFirstFrame: options.firstFrame,
+				actualLastFrame: options.lastFrame,
+				framesAdvanced,
+				shouldLoop: options.loop,
+			});
+			framesAdvanced += framesToAdvance;
+			if (
+				nextFrame !== currentFrame &&
+				(!hasEnded || options.moveToBeginningWhenEnded)
+			) {
+				options.setFrame(nextFrame);
+			}
+
+			if (hasEnded) {
+				ended = true;
+				options.onEnded();
+			}
+		};
+
 		const painted = () => {
-			paint = null;
-			changed();
+			try {
+				paint = requestAnimationFrame(painted);
+				advance();
+				if (
+					ended ||
+					!options.isPlaying() ||
+					options.isBuffering() ||
+					document.hidden ||
+					(!options.muted &&
+						!audioFailed &&
+						options.audio?.getIsResumingAudioContext())
+				) {
+					changed();
+				}
+			} catch (error) {
+				PubSub.publishUnsafe(changes, Effect.die(error));
+			}
 		};
 
 		yield* Effect.acquireRelease(
 			Effect.sync(() => {
+				const unsubscribe = options.subscribeBuffering(changed);
 				document.addEventListener('visibilitychange', changed);
-				return options.subscribeBuffering(changed);
+				return unsubscribe;
 			}),
 			(unsubscribe) =>
 				Effect.sync(() => {
@@ -51,11 +118,11 @@ export const playbackClock = Effect.fnUntraced(
 					}
 				}),
 		);
-		const clock = yield* Clock.Clock;
-		let started = clock.monotonicTimeNanosUnsafe();
-		let framesAdvanced = 0;
-		let audioFailed = false;
 		while (options.isPlaying()) {
+			if (ended) {
+				return;
+			}
+
 			const resuming =
 				options.muted || audioFailed
 					? null
@@ -97,6 +164,7 @@ export const playbackClock = Effect.fnUntraced(
 
 			if (document.hidden) {
 				yield* Effect.raceFirst(Effect.sleep(1000 / options.fps), nextTick);
+				advance();
 			} else {
 				paint = requestAnimationFrame(painted);
 				yield* nextTick;
@@ -104,44 +172,10 @@ export const playbackClock = Effect.fnUntraced(
 					cancelAnimationFrame(paint);
 					paint = null;
 				}
-			}
 
-			if (!options.isPlaying()) {
-				options.audio?.suspend();
-				return;
-			}
-
-			if (options.isBuffering()) {
-				continue;
-			}
-
-			if (!options.muted && !audioFailed) {
-				options.audio?.resume();
-			}
-
-			const now = clock.monotonicTimeNanosUnsafe();
-			const currentFrame = options.getCurrentFrame();
-			const {nextFrame, framesToAdvance, hasEnded} = calculateNextFrame({
-				time: Number(now - started) / 1_000_000,
-				currentFrame,
-				playbackSpeed: options.playbackRate,
-				fps: options.fps,
-				actualFirstFrame: options.firstFrame,
-				actualLastFrame: options.lastFrame,
-				framesAdvanced,
-				shouldLoop: options.loop,
-			});
-			framesAdvanced += framesToAdvance;
-			if (
-				nextFrame !== currentFrame &&
-				(!hasEnded || options.moveToBeginningWhenEnded)
-			) {
-				options.setFrame(nextFrame);
-			}
-
-			if (hasEnded) {
-				options.onEnded();
-				return;
+				if (!ended) {
+					advance();
+				}
 			}
 		}
 	},
