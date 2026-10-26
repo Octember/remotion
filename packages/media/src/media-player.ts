@@ -415,7 +415,6 @@ export class MediaPlayer {
 				await Promise.all([
 					this.audioIteratorManager
 						? this.audioIteratorManager.startAudioIterator({
-								nonce,
 								playbackRate: this.playbackRate * this.globalPlaybackRate,
 								startFromSecond: startTime,
 								unloopedStartFromSecond: startTimeUnresolved,

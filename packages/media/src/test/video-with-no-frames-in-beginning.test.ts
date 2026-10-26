@@ -133,7 +133,6 @@ test('same goes for audio', async () => {
 	const nonceManager = makeNonceManager();
 
 	manager.startAudioIterator({
-		nonce: nonceManager.createAsyncOperation(),
 		playbackRate: 1,
 		startFromSecond: 0.06671494248275864,
 		unloopedStartFromSecond: 0.06671494248275864,

@@ -271,19 +271,16 @@ export const audioIteratorManager = ({
 
 	const proceedScheduling = ({
 		iterator,
-		nonce,
 		getTargetTime,
 		playbackRate,
 		scheduleAudioNode,
 		onScheduled,
-		onDestroyed,
 		onDone,
 		logLevel,
 		currentTime,
 		getAudioContextCurrentTimeMockedInTest,
 	}: {
 		iterator: AudioIterator;
-		nonce: Nonce;
 		getTargetTime: (
 			mediaTimestamp: number,
 			currentTime: number,
@@ -295,7 +292,6 @@ export const audioIteratorManager = ({
 			timelineTimestamp: number,
 		) => void;
 		onDone: () => void;
-		onDestroyed: () => void;
 		logLevel: LogLevel;
 		currentTime: number;
 		getAudioContextCurrentTimeMockedInTest: () => number;
@@ -303,7 +299,7 @@ export const audioIteratorManager = ({
 		waitForTurn({
 			getPriority: () => {
 				if (iterator.isDestroyed()) {
-					onDestroyed();
+					onDone();
 					return null;
 				}
 
@@ -325,14 +321,6 @@ export const audioIteratorManager = ({
 			},
 			fn: () => iterator.getNextFn(),
 			onDone: (result) => {
-				if (iterator.isDestroyed()) {
-					onDestroyed();
-					return;
-				}
-
-				// We schedule even if nonce.isStale(), because the iterator is still alive and the seek did not destroy the
-				// iterator. So the seek was non-destructive, and the schedule valid. The iterator already progressed, we cannot get it again.
-
 				if (!result.value) {
 					// media ended
 					onDone();
@@ -353,12 +341,10 @@ export const audioIteratorManager = ({
 				});
 				proceedScheduling({
 					iterator,
-					nonce,
 					getTargetTime,
 					playbackRate,
 					scheduleAudioNode,
 					onScheduled,
-					onDestroyed,
 					onDone,
 					logLevel,
 					currentTime,
@@ -369,12 +355,12 @@ export const audioIteratorManager = ({
 				if (e instanceof InputDisposedError) {
 					// iterator was disposed by a newer startAudioIterator call
 					// this is expected during rapid seeking
-					onDestroyed();
+					onDone();
 					return;
 				}
 
 				if (e instanceof StaleWaiterError) {
-					onDestroyed();
+					onDone();
 					// iterator was stale before it got its turn
 					return;
 				}
@@ -385,7 +371,6 @@ export const audioIteratorManager = ({
 	};
 
 	const startAudioIterator = ({
-		nonce,
 		playbackRate,
 		startFromSecond,
 		unloopedStartFromSecond,
@@ -398,7 +383,6 @@ export const audioIteratorManager = ({
 	}: {
 		startFromSecond: number;
 		unloopedStartFromSecond: number;
-		nonce: Nonce;
 		playbackRate: number;
 		scheduleAudioNode: ScheduleAudioNode;
 		getTargetTime: (
@@ -458,19 +442,9 @@ export const audioIteratorManager = ({
 		audioBufferIterator = iterator;
 
 		let bufferedUntil = startFromSecond;
-		let hasUnblockedPlayback = false;
-		const unblockPlayback = () => {
-			if (hasUnblockedPlayback) {
-				return;
-			}
-
-			hasUnblockedPlayback = true;
-			delayHandle.unblock();
-		};
 
 		proceedScheduling({
 			iterator,
-			nonce,
 			getTargetTime,
 			playbackRate,
 			scheduleAudioNode,
@@ -487,15 +461,10 @@ export const audioIteratorManager = ({
 				// horizon before enough chunks are queued:
 				// https://github.com/remotion-dev/remotion/issues/9394
 				if (hasEnoughAudioToStartPlayback(bufferedDuration)) {
-					unblockPlayback();
+					delayHandle.unblock();
 				}
 			},
-			onDestroyed: () => {
-				unblockPlayback();
-			},
-			onDone: () => {
-				unblockPlayback();
-			},
+			onDone: delayHandle.unblock,
 			logLevel,
 			currentTime: sharedAudioContext.audioContext.currentTime,
 			getAudioContextCurrentTimeMockedInTest,
@@ -625,7 +594,6 @@ export const audioIteratorManager = ({
 		}
 
 		startAudioIterator({
-			nonce,
 			playbackRate,
 			startFromSecond: newTime,
 			unloopedStartFromSecond: unloopedNewTime,

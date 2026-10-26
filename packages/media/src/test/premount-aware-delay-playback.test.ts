@@ -107,3 +107,24 @@ test('dispose via Symbol.dispose unblocks', () => {
 
 	expect(getActiveBlocks()).toBe(0);
 });
+
+test('a disposed handle releases the underlying block only once', () => {
+	let releases = 0;
+	const delayPlayback = new PremountAwareDelayPlayback({
+		bufferState: {
+			delayPlayback: () => ({
+				unblock: () => {
+					releases++;
+				},
+			}),
+		},
+		isPremounting: false,
+		isPostmounting: false,
+	});
+	const handle = delayPlayback.createHandle();
+	handle.unblock();
+	handle.unblock();
+	handle[Symbol.dispose]();
+	delayPlayback.setIsPremounting(false);
+	expect(releases).toBe(1);
+});

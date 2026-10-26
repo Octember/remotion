@@ -37,55 +37,56 @@ const drain = Effect.scoped(
 		);
 
 		while (waiters.length > 0) {
-			const priorities = waiters.map((waiter) => ({
-				waiter,
-				priority: waiter.getPriority(),
-			}));
-			const stale = priorities.filter((entry) => entry.priority === null);
-			for (const entry of stale) {
-				waiters.splice(waiters.indexOf(entry.waiter), 1);
+			const stale = waiters.filter((waiter) => waiter.getPriority() === null);
+			for (const waiter of stale) {
+				waiters.splice(waiters.indexOf(waiter), 1);
 			}
 
-			for (const entry of stale) {
-				entry.waiter.onError(new StaleWaiterError());
+			for (const waiter of stale) {
+				waiter.onError(new StaleWaiterError());
 			}
 
-			const next = priorities
-				.filter(
-					(entry): entry is {waiter: Waiter; priority: number} =>
-						entry.priority !== null,
-				)
-				.sort((a, b) => a.priority - b.priority)[0];
-			if (!next) {
+			let selected: Waiter | null = null;
+			let priority = 0;
+			for (const waiter of waiters) {
+				const candidate = waiter.getPriority();
+				if (candidate !== null && (selected === null || candidate < priority)) {
+					selected = waiter;
+					priority = candidate;
+				}
+			}
+
+			if (selected === null) {
 				continue;
 			}
 
-			if (next.priority > 2) {
+			if (priority > 2) {
 				yield* PubSub.take(subscription);
 				continue;
 			}
 
-			waiters.splice(waiters.indexOf(next.waiter), 1);
+			const next = selected;
+			waiters.splice(waiters.indexOf(next), 1);
 			yield* Effect.raceFirst(
 				Effect.tryPromise({
-					try: next.waiter.fn,
+					try: next.fn,
 					catch: (error) => error,
 				}).pipe(
 					Effect.match({
 						onSuccess: (value) => {
-							if (next.waiter.getPriority() !== null) {
-								next.waiter.onDone(value);
+							if (next.getPriority() !== null) {
+								next.onDone(value);
 							}
 						},
 						onFailure: (error) => {
-							if (next.waiter.getPriority() !== null) {
-								next.waiter.onError(error);
+							if (next.getPriority() !== null) {
+								next.onError(error);
 							}
 						},
 					}),
 				),
 				Effect.gen(function* () {
-					while (next.waiter.getPriority() !== null) {
+					while (next.getPriority() !== null) {
 						yield* PubSub.take(subscription);
 					}
 				}),

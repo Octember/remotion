@@ -7,6 +7,7 @@ import {
 	hasEnoughAudioToStartPlayback,
 } from '../audio-iterator-manager';
 import {makeNonceManager} from '../nonce-manager';
+import {PremountAwareDelayPlayback} from '../premount-aware-delay-playback';
 
 const prepare = async (options?: {
 	src?: string;
@@ -55,15 +56,21 @@ const prepare = async (options?: {
 	const unscheduleAudioNode = () => {};
 	const audioSyncAnchor = {value: 0};
 	let playbackUnblocks = 0;
+	const delayPlayback = new PremountAwareDelayPlayback({
+		bufferState: {
+			delayPlayback: () => ({
+				unblock: () => {
+					playbackUnblocks++;
+				},
+			}),
+		},
+		isPremounting: false,
+		isPostmounting: false,
+	});
 
 	const manager = audioIteratorManager({
 		audioTrack,
-		delayPlaybackHandleIfNotPremounting: () => ({
-			unblock: () => {
-				playbackUnblocks++;
-			},
-			[Symbol.dispose]: () => {},
-		}),
+		delayPlaybackHandleIfNotPremounting: () => delayPlayback.createHandle(),
 		sharedAudioContext: {
 			audioContext,
 			gainNode: audioContext.createGain(),
