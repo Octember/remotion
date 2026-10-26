@@ -167,18 +167,15 @@ test('serializes live decodes and chooses the nearest waiting deadline', async (
 	await expect.poll(() => events).toEqual(['first', '0.5', '1']);
 });
 
-test('includes work enqueued by stale cleanup when choosing the next deadline', async () => {
-	const events: string[] = [];
-	let armed = false;
-	waitForTurn({
-		getPriority: () => (armed ? null : 3),
-		fn: () => Promise.resolve(),
-		onDone: () => {
-			events.push('stale');
-		},
-		onError: () => {
+test.each(['enqueues', 'reprioritizes'])(
+	'includes work that stale cleanup %s when choosing the next deadline',
+	async (change) => {
+		const events: string[] = [];
+		let armed = false;
+		let urgent = false;
+		const enqueueUrgent = () => {
 			waitForTurn({
-				getPriority: () => 0,
+				getPriority: () => (urgent ? 0 : 3),
 				fn: () => Promise.resolve(),
 				onDone: () => {
 					events.push('urgent');
@@ -187,19 +184,37 @@ test('includes work enqueued by stale cleanup when choosing the next deadline', 
 					throw error;
 				},
 			});
-		},
-	});
-	waitForTurn({
-		getPriority: () => (armed ? 1 : 3),
-		fn: () => Promise.resolve(),
-		onDone: () => {
-			events.push('regular');
-		},
-		onError: (error) => {
-			throw error;
-		},
-	});
-	armed = true;
-	processNext();
-	await expect.poll(() => events).toEqual(['urgent', 'regular']);
-});
+		};
+
+		waitForTurn({
+			getPriority: () => (armed ? null : 3),
+			fn: () => Promise.resolve(),
+			onDone: () => {
+				events.push('stale');
+			},
+			onError: () => {
+				urgent = true;
+				if (change === 'enqueues') {
+					enqueueUrgent();
+				}
+			},
+		});
+		waitForTurn({
+			getPriority: () => (armed ? 1 : 3),
+			fn: () => Promise.resolve(),
+			onDone: () => {
+				events.push('regular');
+			},
+			onError: (error) => {
+				throw error;
+			},
+		});
+		if (change === 'reprioritizes') {
+			enqueueUrgent();
+		}
+
+		armed = true;
+		processNext();
+		await expect.poll(() => events).toEqual(['urgent', 'regular']);
+	},
+);

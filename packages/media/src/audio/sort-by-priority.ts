@@ -23,7 +23,7 @@ const drain = Effect.scoped(
 			PubSub.unbounded<{waiter: Waiter; deliver: () => void} | null>(),
 			PubSub.shutdown,
 		);
-		const subscription = yield* PubSub.subscribe(changes);
+		const nextChange = PubSub.take(yield* PubSub.subscribe(changes));
 		yield* Effect.addFinalizer(() =>
 			Effect.sync(() => {
 				wake = null;
@@ -34,7 +34,7 @@ const drain = Effect.scoped(
 		let running: Waiter | null = null;
 		while (waiters.length > 0 || running) {
 			if (running && running.getPriority() !== null) {
-				const completion = yield* PubSub.take(subscription);
+				const completion = yield* nextChange;
 				if (completion?.waiter !== running) {
 					continue;
 				}
@@ -45,31 +45,33 @@ const drain = Effect.scoped(
 			}
 
 			running = null;
-			const stale = waiters.filter((waiter) => waiter.getPriority() === null);
-			for (const waiter of stale) {
-				waiters.splice(waiters.indexOf(waiter), 1);
-			}
-
-			for (const waiter of stale) {
-				waiter.onError(new StaleWaiterError());
-			}
-
+			const stale: Waiter[] = [];
 			let selected: Waiter | null = null;
 			let priority = 0;
 			for (const waiter of waiters) {
 				const candidate = waiter.getPriority();
-				if (candidate !== null && (selected === null || candidate < priority)) {
+				if (candidate === null) {
+					stale.push(waiter);
+				} else if (selected === null || candidate < priority) {
 					selected = waiter;
 					priority = candidate;
 				}
 			}
 
-			if (selected === null) {
+			if (stale.length > 0 || selected === null) {
+				for (const waiter of stale) {
+					waiters.splice(waiters.indexOf(waiter), 1);
+				}
+
+				for (const waiter of stale) {
+					waiter.onError(new StaleWaiterError());
+				}
+
 				continue;
 			}
 
 			if (priority > 2) {
-				yield* PubSub.take(subscription);
+				yield* nextChange;
 				continue;
 			}
 
