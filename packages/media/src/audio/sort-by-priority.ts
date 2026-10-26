@@ -20,10 +20,10 @@ let wake: (() => void) | null = null;
 const drain = Effect.scoped(
 	Effect.gen(function* () {
 		const changes = yield* Effect.acquireRelease(
-			PubSub.unbounded<Effect.Effect<void>>(),
+			PubSub.unbounded<{error: unknown} | null>(),
 			PubSub.shutdown,
 		);
-		const take = Effect.flatten(PubSub.take(yield* PubSub.subscribe(changes)));
+		const take = PubSub.take(yield* PubSub.subscribe(changes));
 		let running: Waiter | null = null;
 		yield* Effect.addFinalizer(() =>
 			Effect.sync(() => {
@@ -85,7 +85,7 @@ const drain = Effect.scoped(
 						running = null;
 						pump();
 					} catch (error) {
-						PubSub.publishUnsafe(changes, Effect.die(error));
+						PubSub.publishUnsafe(changes, {error});
 					}
 				};
 
@@ -103,24 +103,29 @@ const drain = Effect.scoped(
 				return;
 			}
 
-			PubSub.publishUnsafe(changes, Effect.void);
+			PubSub.publishUnsafe(changes, null);
 		};
 
-		const check = Effect.sync(pump);
 		wake = () => {
 			if (running === null || running.getPriority() === null) {
 				// Reentrant admissions must wait until their callback finishes.
-				queueMicrotask(() => PubSub.publishUnsafe(changes, check));
+				queueMicrotask(() => PubSub.publishUnsafe(changes, null));
 			}
 		};
 
 		pump();
 		while (true) {
+			const change = yield* take;
+			// Cleanup failures must survive even if they removed the last waiter.
+			if (change !== null) {
+				yield* Effect.die(change.error);
+			}
+
 			if (waiters.length === 0 && running === null) {
 				return;
 			}
 
-			yield* take;
+			pump();
 		}
 	}),
 );
