@@ -1,9 +1,9 @@
 import {afterEach, expect, test} from 'bun:test';
 import {createRef} from 'react';
-import {Html5Audio, Internals} from 'remotion';
+import {Html5Audio, Internals, useBufferState} from 'remotion';
 import type {PlayerRef} from '../player-methods.js';
 import {Player} from '../Player.js';
-import {act, cleanup, render} from './test-utils.js';
+import {act, cleanup, render, waitFor} from './test-utils.js';
 
 afterEach(() => {
 	cleanup();
@@ -11,6 +11,8 @@ afterEach(() => {
 
 let createdAudioContexts = 0;
 let resumeCalls = 0;
+let suspendCalls = 0;
+let outputClockReads = 0;
 
 class FrozenAudioContext {
 	public state = 'suspended' as AudioContextState;
@@ -43,6 +45,7 @@ class FrozenAudioContext {
 	}
 
 	suspend() {
+		suspendCalls++;
 		this.state = 'suspended';
 		return Promise.resolve();
 	}
@@ -53,6 +56,7 @@ class FrozenAudioContext {
 	}
 
 	getOutputTimestamp() {
+		outputClockReads++;
 		return {contextTime: 0, performanceTime: 0};
 	}
 
@@ -79,7 +83,7 @@ const AudioComposition = () => {
 	);
 };
 
-test('Player mutes and continues after an AudioContext resume stays pending', async () => {
+test('Player stays unmuted and waits when native resume remains pending', async () => {
 	const originalAudioContext = globalThis.AudioContext;
 	const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
 	const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
@@ -126,28 +130,27 @@ test('Player mutes and continues after an AudioContext resume stays pending', as
 			await Promise.resolve();
 		});
 		expect(resumeCalls).toBe(1);
-		expect(animationFrames.size).toBe(1);
+		expect(animationFrames.size).toBe(0);
 		const stalledFrame = playerRef.current?.getCurrentFrame();
 
 		await new Promise<void>((resolve) => setTimeout(resolve, 50));
 		act(flushAnimationFrames);
 		expect(playerRef.current?.getCurrentFrame()).toBe(stalledFrame);
+		const initialResumeCalls = resumeCalls;
 
 		await act(async () => {
 			await new Promise<void>((resolve) => setTimeout(resolve, 1050));
 		});
-		expect(animationFrames.size).toBe(1);
+		expect(animationFrames.size).toBe(0);
 
 		await new Promise<void>((resolve) => setTimeout(resolve, 50));
 		act(flushAnimationFrames);
 
 		expect(playerRef.current?.isPlaying()).toBe(true);
-		expect(playerRef.current?.isMuted()).toBe(true);
-		expect(playerRef.current?.getCurrentFrame()).toBeGreaterThan(
-			stalledFrame ?? 0,
-		);
-		expect(resumeCalls).toBe(1);
-		expect(animationFrames.size).toBe(1);
+		expect(playerRef.current?.isMuted()).toBe(false);
+		expect(playerRef.current?.getCurrentFrame()).toBe(stalledFrame);
+		expect(resumeCalls).toBe(initialResumeCalls);
+		expect(animationFrames.size).toBe(0);
 
 		await act(async () => {
 			playerRef.current?.pause();
@@ -160,8 +163,9 @@ test('Player mutes and continues after an AudioContext resume stays pending', as
 			playerRef.current?.play();
 			await Promise.resolve();
 		});
-		expect(resumeCalls).toBe(2);
-		expect(animationFrames.size).toBe(1);
+		expect(resumeCalls).toBeGreaterThan(initialResumeCalls);
+		expect(animationFrames.size).toBe(0);
+		const retryResumeCalls = resumeCalls;
 
 		await act(async () => {
 			playerRef.current?.pause();
@@ -169,9 +173,71 @@ test('Player mutes and continues after an AudioContext resume stays pending', as
 		});
 		expect(playerRef.current?.isPlaying()).toBe(false);
 		expect(animationFrames.size).toBe(0);
+		await act(() => {
+			playerRef.current?.play();
+		});
+		await waitFor(() => expect(resumeCalls).toBeGreaterThan(retryResumeCalls));
+		const readsBeforeUnmount = outputClockReads;
+		cleanup();
+		act(flushAnimationFrames);
+		expect(outputClockReads).toBe(readsBeforeUnmount);
 	} finally {
 		globalThis.AudioContext = originalAudioContext;
 		globalThis.requestAnimationFrame = originalRequestAnimationFrame;
 		globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+	}
+});
+
+test('buffering cancels playback while a native resume remains pending', async () => {
+	const originalAudioContext = globalThis.AudioContext;
+	globalThis.AudioContext =
+		FrozenAudioContext as unknown as typeof AudioContext;
+	let begin: ReturnType<typeof useBufferState>['delayPlayback'] | null = null;
+	const Composition = () => {
+		begin = useBufferState().delayPlayback;
+		return <AudioComposition />;
+	};
+
+	const ref = createRef<PlayerRef>();
+	try {
+		resumeCalls = 0;
+		const view = render(
+			<Player
+				ref={ref}
+				component={Composition}
+				durationInFrames={300}
+				compositionWidth={320}
+				compositionHeight={180}
+				fps={30}
+			/>,
+		);
+		await act(() => {
+			ref.current?.play();
+		});
+		await waitFor(() => expect(resumeCalls).toBe(1));
+		const suspendedBeforeBuffering = suspendCalls;
+		if (!begin) throw new Error('Composition did not mount');
+		const delay = begin as ReturnType<typeof useBufferState>['delayPlayback'];
+		let handle: ReturnType<typeof delay>;
+		await act(() => {
+			handle = delay();
+		});
+		expect(suspendCalls).toBe(suspendedBeforeBuffering);
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 1100));
+		});
+		expect(ref.current?.isMuted()).toBe(false);
+		expect(ref.current?.getCurrentFrame()).toBe(0);
+		const callsBeforeUnblock = resumeCalls;
+		await act(() => {
+			handle.unblock();
+		});
+		await waitFor(() =>
+			expect(resumeCalls).toBeGreaterThan(callsBeforeUnblock),
+		);
+		view.unmount();
+	} finally {
+		cleanup();
+		globalThis.AudioContext = originalAudioContext;
 	}
 });

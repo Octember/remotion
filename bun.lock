@@ -430,6 +430,9 @@
     "packages/core": {
       "name": "remotion",
       "version": "4.0.520",
+      "dependencies": {
+        "effect": "4.0.6",
+      },
       "devDependencies": {
         "@happy-dom/global-registrator": "14.5.1",
         "@remotion/eslint-config-internal": "workspace:*",
@@ -1288,6 +1291,7 @@
       "name": "@remotion/media",
       "version": "4.0.520",
       "dependencies": {
+        "effect": "4.0.6",
         "mediabunny": "catalog:",
         "remotion": "workspace:*",
         "zod": "catalog:",
@@ -1396,6 +1400,7 @@
       "name": "@remotion/player",
       "version": "4.0.520",
       "dependencies": {
+        "effect": "4.0.6",
         "remotion": "workspace:*",
       },
       "devDependencies": {
@@ -6287,6 +6292,8 @@
     "edgedriver": ["edgedriver@6.1.2", "", { "dependencies": { "@wdio/logger": "9.18.0", "@zip.js/zip.js": "2.7.72", "decamelize": "6.0.1", "edge-paths": "3.0.5", "fast-xml-parser": "5.3.5", "http-proxy-agent": "7.0.2", "https-proxy-agent": "7.0.6", "node-fetch": "3.3.2", "which": "5.0.0" }, "bin": { "edgedriver": "bin/edgedriver.js" } }, "sha512-UvFqd/IR81iPyWMcxXbUNi+xKWR7JjfoHjfuwjqsj9UHQKn80RpQmS0jf+U25IPi+gKVPcpOSKm0XkqgGMq4zQ=="],
 
     "ee-first": ["ee-first@1.1.1", "", {}, "sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow=="],
+
+    "effect": ["effect@4.0.6", "", {}, "sha512-Tc3mkzuLR6t6P9dhLt0D2GrxYtmU5td4XEJEiXCmILz53IRIfJyHsKZWjTA3xEjiwpNTtXBgI4iqYPxMztBDrw=="],
 
     "electron": ["electron@40.8.5", "", { "dependencies": { "@electron/get": "^2.0.0", "@types/node": "^24.9.0", "extract-zip": "^2.0.1" }, "bin": { "electron": "cli.js" } }, "sha512-pgTY/VPQKaiU4sTjfU96iyxCXrFm4htVPCMRT4b7q9ijNTRgtLmLvcmzp2G4e7xDrq9p7OLHSmu1rBKFf6Y1/A=="],
 

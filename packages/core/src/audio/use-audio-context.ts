@@ -99,11 +99,13 @@ export const useSingletonAudioContext = ({
 			transitionTarget = 'running';
 			const promise = audioContext.resume();
 
-			promise.finally(() => {
+			const clearTransition = () => {
 				if (transitionTarget === 'running') {
 					transitionTarget = null;
 				}
-			});
+			};
+
+			promise.then(clearTransition, clearTransition);
 
 			return promise;
 		};
@@ -112,11 +114,13 @@ export const useSingletonAudioContext = ({
 			transitionTarget = 'suspended';
 			const promise = audioContext.suspend();
 
-			promise.finally(() => {
+			const clearTransition = () => {
 				if (transitionTarget === 'suspended') {
 					transitionTarget = null;
 				}
-			});
+			};
+
+			promise.then(clearTransition, clearTransition);
 
 			return promise;
 		};

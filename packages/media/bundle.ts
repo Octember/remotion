@@ -9,6 +9,7 @@ const output = await build({
 	entrypoints: ['src/index.ts'],
 	naming: '[name].mjs',
 	external: [
+		'effect',
 		'remotion',
 		'remotion/no-react',
 		'react',

@@ -8,7 +8,7 @@ const output = await build({
 	entrypoints: ['src/index.ts'],
 	naming: '[name].mjs',
 	target: 'node',
-	external: ['remotion', 'remotion/no-react', 'react'],
+	external: ['remotion', 'remotion/no-react', 'react', 'effect'],
 });
 
 const [file] = output.outputs;

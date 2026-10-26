@@ -16,7 +16,7 @@ const output = await build({
 	entrypoints: ['src/index.ts'],
 	naming: '[name].mjs',
 	target: 'browser',
-	external: ['remotion', 'remotion/no-react', 'react', 'react-dom'],
+	external: ['remotion', 'remotion/no-react', 'react', 'react-dom', 'effect'],
 });
 
 const [file] = output.outputs;

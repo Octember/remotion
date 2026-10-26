@@ -12,12 +12,12 @@ import {
 	audioIteratorManager,
 	type AudioIteratorManager,
 } from './audio-iterator-manager';
+import {getAudioScheduler} from './audio/audio-scheduler';
 import {
 	getDurationOfNode,
 	getScheduledTime,
 	getTrimStartForAudioNode,
 } from './audio/get-scheduled-time';
-import {processNext} from './audio/sort-by-priority';
 import {drawPreviewOverlay} from './debug-overlay/preview-overlay';
 import {acquireSharedInput} from './get-shared-input';
 import {calculateEndTime, getTimeInSeconds} from './get-time-in-seconds';
@@ -415,7 +415,6 @@ export class MediaPlayer {
 				await Promise.all([
 					this.audioIteratorManager
 						? this.audioIteratorManager.startAudioIterator({
-								nonce,
 								playbackRate: this.playbackRate * this.globalPlaybackRate,
 								startFromSecond: startTime,
 								unloopedStartFromSecond: startTimeUnresolved,
@@ -668,12 +667,16 @@ export class MediaPlayer {
 
 	public setIsPremounting(isPremounting: boolean): void {
 		this.premountAwareDelayPlayback.setIsPremounting(isPremounting);
-		processNext();
+		if (this.sharedAudioContext) {
+			getAudioScheduler(this.sharedAudioContext.audioContext).notify();
+		}
 	}
 
 	public setIsPostmounting(isPostmounting: boolean): void {
 		this.premountAwareDelayPlayback.setIsPostmounting(isPostmounting);
-		processNext();
+		if (this.sharedAudioContext) {
+			getAudioScheduler(this.sharedAudioContext.audioContext).notify();
+		}
 	}
 
 	public async setLoop(

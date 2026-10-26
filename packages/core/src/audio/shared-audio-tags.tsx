@@ -1,3 +1,4 @@
+import {Cause, Effect, Exit, Fiber} from 'effect';
 import React, {
 	createContext,
 	createRef,
@@ -13,6 +14,7 @@ import {useLogLevel, useMountTime} from '../log-level-context.js';
 import {Log} from '../log.js';
 import {playAndHandleNotAllowedError} from '../play-and-handle-not-allowed-error.js';
 import {useRemotionEnvironment} from '../use-remotion-environment.js';
+import {createAudioClock, type AudioClock} from './audio-clock.js';
 import type {SharedElementSourceNode} from './shared-element-source-node.js';
 import {makeSharedElementSourceNode} from './shared-element-source-node.js';
 import type {RemotionAudioContextState} from './use-audio-context.js';
@@ -69,21 +71,11 @@ export type ScheduleAudioNodeOptions = {
 	readonly offset: number;
 };
 
-export type AudioSyncAnchorEvent = 'changed';
-
-export type AudioSyncAnchorListener = (event: AudioSyncAnchorEvent) => void;
-
-export type AudioSyncAnchorEmitter = {
-	dispatch: (event: AudioSyncAnchorEvent) => void;
-	subscribe: (listener: AudioSyncAnchorListener) => {remove: () => void};
-};
-
 type SharedAudioContextValue = {
 	audioContext: AudioContext | null;
 	getAudioContextState: () => RemotionAudioContextState | null;
 	gainNode: GainNode | null;
-	audioSyncAnchor: {value: number};
-	audioSyncAnchorEmitter: AudioSyncAnchorEmitter;
+	audioSyncAnchor: AudioClock;
 	scheduleAudioNode: (
 		options: ScheduleAudioNodeOptions,
 	) => ScheduleAudioNodeResult;
@@ -178,8 +170,7 @@ type NodeToResume = {
 };
 
 type AudioContextResumeAttempt = {
-	abortController: AbortController;
-	id: number;
+	fiber: Fiber.Fiber<'resumed' | 'failed'>;
 	promise: Promise<AudioContextResumeResult>;
 };
 
@@ -246,27 +237,15 @@ export const SharedAudioContextProvider: React.FC<{
 	}
 
 	const isResuming = useRef<AudioContextResumeAttempt | null>(null);
-	const nextResumeAttemptId = useRef(0);
+	useEffect(
+		() => () => {
+			isResuming.current?.fiber.interruptUnsafe();
+			isResuming.current = null;
+		},
+		[ctxAndGain],
+	);
 
-	const audioSyncAnchor = useMemo(() => ({value: 0}), []);
-
-	const audioSyncAnchorListeners = useRef<AudioSyncAnchorListener[]>([]);
-	const audioSyncAnchorEmitter: AudioSyncAnchorEmitter = useMemo(() => {
-		return {
-			dispatch: (event) => {
-				audioSyncAnchorListeners.current.forEach((l) => l(event));
-			},
-			subscribe: (listener) => {
-				audioSyncAnchorListeners.current.push(listener);
-				return {
-					remove: () => {
-						audioSyncAnchorListeners.current =
-							audioSyncAnchorListeners.current.filter((l) => l !== listener);
-					},
-				};
-			},
-		};
-	}, []);
+	const audioSyncAnchor = useMemo(createAudioClock, []);
 
 	const prevEndTimes = useRef<{
 		scheduledEndTime: number | null;
@@ -397,7 +376,10 @@ export const SharedAudioContextProvider: React.FC<{
 			return Promise.resolve();
 		}
 
-		if (audioContextIsPlayingEventually.current) {
+		if (
+			audioContextIsPlayingEventually.current &&
+			ctxAndGain.getState() === 'running'
+		) {
 			return Promise.resolve();
 		}
 
@@ -424,46 +406,44 @@ export const SharedAudioContextProvider: React.FC<{
 			_experimentalKeepAudioContextAlive &&
 			ctxAndGain.audioContext.state === 'running'
 		) {
-			// The context was never suspended, so there is nothing to wait for:
-			// the resume-wait machinery, its timeout and the mute-on-failure
-			// path are not entered.
+			// The context was never suspended, so there is no resume barrier.
 			return Promise.resolve();
 		}
 
 		const resumePromise = ctxAndGain.resume();
-		const abortController = new AbortController();
-		const resumeAttemptId = nextResumeAttemptId.current++;
-
-		const waitPromise = new Promise<AudioContextResumeResult>((resolve) => {
-			waitUntilActuallyResumed(
-				ctxAndGain.audioContext,
-				logLevel,
-				abortController.signal,
-			).then(resolve);
-			resumePromise.catch((err) => {
+		const nativeResume = resumePromise.catch((error) => {
+			Log.warn(
+				{logLevel, tag: 'audio'},
+				'AudioContext resume rejected; keeping playback buffered until the next resume attempt',
+				error,
+			);
+		});
+		if (isResuming.current) return nativeResume;
+		const fiber = Effect.runFork(
+			waitUntilActuallyResumed(ctxAndGain.audioContext),
+		);
+		const waitPromise = Effect.runPromise(Fiber.await(fiber))
+			.then((exit): AudioContextResumeResult => {
+				if (Exit.isSuccess(exit)) return exit.value;
+				if (Cause.hasInterruptsOnly(exit.cause)) return 'cancelled';
 				Log.warn(
 					{logLevel, tag: 'audio'},
-					'AudioContext resume rejected, muting playback and continuing without audio',
-					err,
+					'Audio output clock failed',
+					exit.cause,
 				);
-				abortController.abort();
-				resolve('failed');
+				return 'failed';
+			})
+			.finally(() => {
+				if (isResuming.current?.fiber === fiber) {
+					isResuming.current = null;
+				}
 			});
-		}).finally(() => {
-			if (isResuming.current?.id === resumeAttemptId) {
-				isResuming.current = null;
-			}
-		});
 		isResuming.current = {
-			abortController,
-			id: resumeAttemptId,
+			fiber,
 			promise: waitPromise,
 		};
 
-		return resumePromise.catch(() => {
-			// Already logged above; swallow to avoid unhandled rejection
-			// since callers (e.g. use-playback.ts) do not await this.
-		});
+		return nativeResume;
 	}, [ctxAndGain, _experimentalKeepAudioContextAlive, logLevel]);
 
 	const getIsResumingAudioContext = useCallback(() => {
@@ -471,8 +451,6 @@ export const SharedAudioContextProvider: React.FC<{
 	}, []);
 
 	const suspend = useCallback(() => {
-		isResuming.current?.abortController.abort();
-
 		if (!ctxAndGain) {
 			return Promise.resolve();
 		}
@@ -498,7 +476,15 @@ export const SharedAudioContextProvider: React.FC<{
 			return Promise.resolve();
 		}
 
-		return ctxAndGain.suspend();
+		if (ctxAndGain.getState() === 'running') return ctxAndGain.suspend();
+		return (isResuming.current?.promise ?? Promise.resolve()).then(() => {
+			if (
+				!audioContextIsPlayingEventually.current &&
+				ctxAndGain.getState() === 'running'
+			) {
+				return ctxAndGain.suspend();
+			}
+		});
 	}, [ctxAndGain, _experimentalKeepAudioContextAlive]);
 
 	// With _experimentalKeepAudioContextAlive, start the context as early as
@@ -553,7 +539,6 @@ export const SharedAudioContextProvider: React.FC<{
 			getAudioContextState: () => ctxAndGain?.getState() ?? null,
 			gainNode: ctxAndGain?.gainNode ?? null,
 			audioSyncAnchor,
-			audioSyncAnchorEmitter,
 			scheduleAudioNode,
 			resume,
 			suspend,
@@ -564,7 +549,6 @@ export const SharedAudioContextProvider: React.FC<{
 	}, [
 		ctxAndGain,
 		audioSyncAnchor,
-		audioSyncAnchorEmitter,
 		scheduleAudioNode,
 		resume,
 		suspend,

@@ -1,3 +1,4 @@
+import {Effect, PubSub} from 'effect';
 import type React from 'react';
 import {useContext, useLayoutEffect} from 'react';
 import type {LogLevel} from 'remotion';
@@ -74,17 +75,19 @@ export const useCommonEffects = ({
 	useLayoutEffect(() => {
 		if (!sharedAudioContext) return;
 
-		const {remove} = sharedAudioContext.audioSyncAnchorEmitter.subscribe(
-			(event) => {
-				if (event === 'changed') {
-					mediaPlayerRef.current?.audioSyncAnchorChanged();
-				}
-			},
+		return Effect.runCallback(
+			Effect.scoped(
+				Effect.gen(function* () {
+					const changes = yield* PubSub.subscribe(
+						sharedAudioContext.audioSyncAnchor.changes,
+					);
+					while (true) {
+						yield* PubSub.take(changes);
+						mediaPlayerRef.current?.audioSyncAnchorChanged();
+					}
+				}),
+			),
 		);
-
-		return () => {
-			remove();
-		};
 	}, [sharedAudioContext, mediaPlayerRef]);
 
 	useLayoutEffect(() => {

@@ -1,7 +1,12 @@
+import {Effect} from 'effect';
 import type {useBufferState} from 'remotion';
-import {expect, test} from 'vitest';
-import {waitForTurn} from '../audio/sort-by-priority';
+import {afterAll, expect, test} from 'vitest';
+import {getAudioScheduler} from '../audio/audio-scheduler';
 import {MediaPlayer} from '../media-player';
+
+const context = new AudioContext();
+const scheduler = getAudioScheduler(context);
+afterAll(() => context.close());
 
 const makePlayer = ({
 	isPremounting,
@@ -14,7 +19,16 @@ const makePlayer = ({
 		canvas: null,
 		src: '/bigbuckbunny.mp4',
 		logLevel: 'info',
-		sharedAudioContext: null,
+		sharedAudioContext: {
+			audioContext: context,
+			gainNode: context.createGain(),
+			audioSyncAnchor: {value: 0},
+			scheduleAudioNode: () => ({
+				type: 'not-started',
+				reason: 'No media loaded',
+			}),
+			unscheduleAudioNode: () => undefined,
+		},
 		loop: false,
 		trimBefore: undefined,
 		trimAfter: undefined,
@@ -46,22 +60,30 @@ const sleep = (ms: number) =>
 		setTimeout(resolve, ms);
 	});
 
-const parkWaiter = () => {
+const parkWaiter = async () => {
 	const events: string[] = [];
 	let priority: number | null = 3;
+	let evaluated = false;
 
-	waitForTurn({
-		getPriority: () => priority,
-		fn: () => Promise.resolve('deferred'),
-		onDone: (_, triggerNext) => {
-			events.push('done');
-			triggerNext();
-		},
-		onError: (err) => {
-			events.push((err as Error).name);
-		},
-	});
+	Effect.runFork(
+		scheduler
+			.run(() => {
+				evaluated = true;
+				return priority;
+			}, Effect.succeed('deferred'))
+			.pipe(
+				Effect.match({
+					onSuccess: () => {
+						events.push('done');
+					},
+					onFailure: (err) => {
+						events.push((err as Error).name);
+					},
+				}),
+			),
+	);
 
+	await expect.poll(() => evaluated).toBe(true);
 	return {
 		events,
 		setPriority: (newPriority: number | null) => {
@@ -71,7 +93,7 @@ const parkWaiter = () => {
 };
 
 test('ending premounting gives deferred audio waiters a turn', async () => {
-	const {events, setPriority} = parkWaiter();
+	const {events, setPriority} = await parkWaiter();
 	const mediaPlayer = makePlayer({isPremounting: true, isPostmounting: false});
 
 	setPriority(1);
@@ -84,7 +106,7 @@ test('ending premounting gives deferred audio waiters a turn', async () => {
 });
 
 test('ending postmounting gives deferred audio waiters a turn', async () => {
-	const {events, setPriority} = parkWaiter();
+	const {events, setPriority} = await parkWaiter();
 	const mediaPlayer = makePlayer({isPremounting: false, isPostmounting: true});
 
 	setPriority(1);
@@ -97,7 +119,7 @@ test('ending postmounting gives deferred audio waiters a turn', async () => {
 });
 
 test('the kick keeps deferring waiters beyond the horizon and sweeps stale ones', async () => {
-	const {events, setPriority} = parkWaiter();
+	const {events, setPriority} = await parkWaiter();
 	const mediaPlayer = makePlayer({isPremounting: true, isPostmounting: false});
 
 	mediaPlayer.setIsPremounting(false);
