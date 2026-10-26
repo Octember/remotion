@@ -110,7 +110,7 @@ test('completion is emitted once and preserves the last frame', async () => {
 	);
 });
 
-test('visibility changes cancel the pending paint and switch clocks without a jump', async () => {
+test('visibility and buffering changes cancel the pending paint without a jump', async () => {
 	const request = globalThis.requestAnimationFrame;
 	const cancel = globalThis.cancelAnimationFrame;
 	const frames = new Map<number, FrameRequestCallback>();
@@ -145,6 +145,13 @@ test('visibility changes cancel the pending paint and switch clocks without a ju
 					value: false,
 				});
 				document.dispatchEvent(new Event('visibilitychange'));
+				yield* TestClock.adjust(0);
+				expect(frames.size).toBe(1);
+				f.buffer(true);
+				yield* TestClock.adjust(1000);
+				expect(frames.size).toBe(0);
+				expect(f.options.getCurrentFrame()).toBe(6);
+				f.buffer(false);
 				yield* TestClock.adjust(0);
 				expect(frames.size).toBe(1);
 				yield* Fiber.interrupt(fiber);

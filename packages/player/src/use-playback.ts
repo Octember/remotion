@@ -1,4 +1,4 @@
-import {Clock, Effect} from 'effect';
+import {Effect} from 'effect';
 import {useLayoutEffect} from 'react';
 import {useContext, useEffect, useRef} from 'react';
 import {Internals} from 'remotion';
@@ -59,7 +59,7 @@ export const usePlayback = ({
 	);
 	const logLevel = Internals.useLogLevel();
 
-	const lastTimeUpdateTimestamp = useRef(BigInt(0));
+	const lastTimeUpdateTimestamp = useRef(0);
 
 	useBrowserMediaSession({
 		browserMediaControlsBehavior,
@@ -223,19 +223,19 @@ export const usePlayback = ({
 	]);
 
 	useEffect(() => {
-		return Effect.runCallback(
-			Effect.gen(function* () {
-				const now = yield* Clock.monotonicTimeNanos;
-				const elapsed =
-					Number(now - lastTimeUpdateTimestamp.current) / 1_000_000;
-				if (elapsed < 250) {
-					yield* Effect.sleep(250 - elapsed);
-				}
+		const now = performance.now();
+		const elapsed = now - lastTimeUpdateTimestamp.current;
+		if (elapsed >= 250) {
+			emitter.dispatchTimeUpdate({frame});
+			lastTimeUpdateTimestamp.current = now;
+			return;
+		}
 
-				emitter.dispatchTimeUpdate({frame});
-				lastTimeUpdateTimestamp.current = yield* Clock.monotonicTimeNanos;
-			}),
-		);
+		const timeout = setTimeout(() => {
+			emitter.dispatchTimeUpdate({frame});
+			lastTimeUpdateTimestamp.current = performance.now();
+		}, 250 - elapsed);
+		return () => clearTimeout(timeout);
 	}, [emitter, frame]);
 
 	useEffect(() => {

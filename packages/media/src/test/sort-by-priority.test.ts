@@ -1,52 +1,70 @@
 import {expect, test} from 'vitest';
 import {processNext, waitForTurn} from '../audio/sort-by-priority';
 
-test('does not resolve a running waiter after it got cancelled for being stale', async () => {
-	const events: string[] = [];
-	let firstPriority: number | null = 0;
-	const first = {
-		resolve: null as ((value: string) => void) | null,
-	};
+test.each(['resolve', 'reject'])(
+	'does not deliver a stale running waiter after it later %ss',
+	async (outcome) => {
+		const events: string[] = [];
+		let firstPriority: number | null = 0;
+		const first = {
+			settle: null as (() => void) | null,
+		};
+		const second = {
+			resolve: null as (() => void) | null,
+		};
 
-	waitForTurn({
-		getPriority: () => firstPriority,
-		fn: () =>
-			new Promise<string>((resolve) => {
-				first.resolve = resolve;
-			}),
-		onDone: () => {
-			events.push('first done');
-		},
-		onError: () => {
-			events.push('first error');
-		},
-	});
+		waitForTurn({
+			getPriority: () => firstPriority,
+			fn: () =>
+				new Promise<string>((resolve, reject) => {
+					first.settle = () => {
+						if (outcome === 'resolve') {
+							resolve('first');
+						} else {
+							reject(new Error('late decode failure'));
+						}
+					};
+				}),
+			onDone: () => {
+				events.push('first done');
+			},
+			onError: () => {
+				events.push('first error');
+			},
+		});
 
-	await expect.poll(() => first.resolve).not.toBeNull();
-	firstPriority = null;
+		await expect.poll(() => first.settle).not.toBeNull();
+		firstPriority = null;
 
-	waitForTurn({
-		getPriority: () => 0,
-		fn: () => Promise.resolve('second'),
-		onDone: () => {
-			events.push('second done');
-		},
-		onError: () => {
-			events.push('second error');
-		},
-	});
+		waitForTurn({
+			getPriority: () => 0,
+			fn: () =>
+				new Promise<void>((resolve) => {
+					second.resolve = resolve;
+				}),
+			onDone: () => {
+				events.push('second done');
+			},
+			onError: () => {
+				events.push('second error');
+			},
+		});
 
-	await expect.poll(() => events).toEqual(['second done']);
+		await expect.poll(() => second.resolve).not.toBeNull();
 
-	if (!first.resolve) {
-		throw new Error('First waiter did not start');
-	}
+		if (!first.settle) {
+			throw new Error('First waiter did not start');
+		}
 
-	first.resolve('first');
-	await Promise.resolve();
+		first.settle();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(events).toEqual([]);
+		second.resolve?.();
+		await expect.poll(() => events).toEqual(['second done']);
 
-	expect(events).toEqual(['second done']);
-});
+		expect(events).toEqual(['second done']);
+	},
+);
 
 test('reevaluates priority and leaves jobs beyond the scheduling horizon waiting', async () => {
 	const events: string[] = [];
@@ -79,30 +97,39 @@ test('reevaluates priority and leaves jobs beyond the scheduling horizon waiting
 	await expect.poll(() => events).toEqual(['now', 'later']);
 });
 
-test('a failed decode frees the slot for the next decode', async () => {
-	const events: string[] = [];
-	waitForTurn({
-		getPriority: () => 0,
-		fn: () => Promise.reject(new Error('decode failed')),
-		onDone: () => {
-			events.push('unexpected');
-		},
-		onError: () => {
-			events.push('failed');
-		},
-	});
-	waitForTurn({
-		getPriority: () => 0,
-		fn: () => Promise.resolve('decoded'),
-		onDone: (value) => {
-			events.push(value);
-		},
-		onError: (error) => {
-			throw error;
-		},
-	});
-	await expect.poll(() => events).toEqual(['failed', 'decoded']);
-});
+test.each(['throw', 'reject'])(
+	'a decode that %ss frees the slot for the next decode',
+	async (failure) => {
+		const events: string[] = [];
+		waitForTurn({
+			getPriority: () => 0,
+			fn: () => {
+				if (failure === 'throw') {
+					throw new Error('decode failed');
+				}
+
+				return Promise.reject(new Error('decode failed'));
+			},
+			onDone: () => {
+				events.push('unexpected');
+			},
+			onError: () => {
+				events.push('failed');
+			},
+		});
+		waitForTurn({
+			getPriority: () => 0,
+			fn: () => Promise.resolve('decoded'),
+			onDone: (value) => {
+				events.push(value);
+			},
+			onError: (error) => {
+				throw error;
+			},
+		});
+		await expect.poll(() => events).toEqual(['failed', 'decoded']);
+	},
+);
 
 test('serializes live decodes and chooses the nearest waiting deadline', async () => {
 	const events: string[] = [];

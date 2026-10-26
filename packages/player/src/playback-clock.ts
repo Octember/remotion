@@ -23,21 +23,16 @@ type PlaybackClockOptions = {
 	onEnded: () => void;
 };
 
-const nextPaint = Effect.callback<void>((resume) => {
-	const id = requestAnimationFrame(() => resume(Effect.void));
-	return Effect.sync(() => cancelAnimationFrame(id));
-});
-
 export const playbackClock = Effect.fnUntraced(
 	function* (options: PlaybackClockOptions) {
 		const changes = yield* Effect.acquireRelease(
 			PubSub.sliding<void>(1),
 			PubSub.shutdown,
 		);
-		const subscription = yield* PubSub.subscribe(changes);
-		const changed = () => {
-			PubSub.publishUnsafe(changes, undefined);
-		};
+		const nextTick = PubSub.take(yield* PubSub.subscribe(changes));
+		const changed = () => PubSub.publishUnsafe(changes, undefined);
+
+		let paint: number;
 
 		yield* Effect.acquireRelease(
 			Effect.sync(() => {
@@ -48,9 +43,11 @@ export const playbackClock = Effect.fnUntraced(
 				Effect.sync(() => {
 					unsubscribe();
 					document.removeEventListener('visibilitychange', changed);
+					cancelAnimationFrame(paint);
 				}),
 		);
-		let started = yield* Clock.monotonicTimeNanos;
+		const clock = yield* Clock.Clock;
+		let started = clock.monotonicTimeNanosUnsafe();
 		let framesAdvanced = 0;
 		let audioFailed = false;
 		while (options.isPlaying()) {
@@ -66,7 +63,7 @@ export const playbackClock = Effect.fnUntraced(
 					options.setMuted();
 				}
 
-				started = yield* Clock.monotonicTimeNanos;
+				started = clock.monotonicTimeNanosUnsafe();
 				framesAdvanced = 0;
 				continue;
 			}
@@ -77,7 +74,7 @@ export const playbackClock = Effect.fnUntraced(
 				}
 
 				while (options.isBuffering()) {
-					yield* PubSub.take(subscription);
+					yield* nextTick;
 				}
 
 				if (
@@ -88,15 +85,19 @@ export const playbackClock = Effect.fnUntraced(
 					options.audio.resume();
 				}
 
-				started = yield* Clock.monotonicTimeNanos;
+				started = clock.monotonicTimeNanosUnsafe();
 				framesAdvanced = 0;
 				continue;
 			}
 
-			yield* Effect.raceFirst(
-				document.hidden ? Effect.sleep(1000 / options.fps) : nextPaint,
-				PubSub.take(subscription),
-			);
+			if (document.hidden) {
+				yield* Effect.raceFirst(Effect.sleep(1000 / options.fps), nextTick);
+			} else {
+				paint = requestAnimationFrame(changed);
+				yield* nextTick;
+				cancelAnimationFrame(paint);
+			}
+
 			if (!options.isPlaying()) {
 				options.audio?.suspend();
 				return;
@@ -110,7 +111,7 @@ export const playbackClock = Effect.fnUntraced(
 				options.audio?.resume();
 			}
 
-			const now = yield* Clock.monotonicTimeNanos;
+			const now = clock.monotonicTimeNanosUnsafe();
 			const {nextFrame, framesToAdvance, hasEnded} = calculateNextFrame({
 				time: Number(now - started) / 1_000_000,
 				currentFrame: options.getCurrentFrame(),

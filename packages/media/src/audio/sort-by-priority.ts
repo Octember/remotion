@@ -20,23 +20,31 @@ let wake: (() => void) | null = null;
 const drain = Effect.scoped(
 	Effect.gen(function* () {
 		const changes = yield* Effect.acquireRelease(
-			PubSub.sliding<void>(1),
+			PubSub.unbounded<{waiter: Waiter; deliver: () => void} | null>(),
 			PubSub.shutdown,
 		);
 		const subscription = yield* PubSub.subscribe(changes);
-		yield* Effect.acquireRelease(
+		yield* Effect.addFinalizer(() =>
 			Effect.sync(() => {
-				wake = () => {
-					PubSub.publishUnsafe(changes, undefined);
-				};
+				wake = null;
 			}),
-			() =>
-				Effect.sync(() => {
-					wake = null;
-				}),
 		);
+		wake = () => PubSub.publishUnsafe(changes, null);
 
-		while (waiters.length > 0) {
+		let running: Waiter | null = null;
+		while (waiters.length > 0 || running) {
+			if (running && running.getPriority() !== null) {
+				const completion = yield* PubSub.take(subscription);
+				if (completion?.waiter !== running) {
+					continue;
+				}
+
+				if (running.getPriority() !== null) {
+					completion.deliver();
+				}
+			}
+
+			running = null;
 			const stale = waiters.filter((waiter) => waiter.getPriority() === null);
 			for (const waiter of stale) {
 				waiters.splice(waiters.indexOf(waiter), 1);
@@ -67,29 +75,18 @@ const drain = Effect.scoped(
 
 			const next = selected;
 			waiters.splice(waiters.indexOf(next), 1);
-			yield* Effect.raceFirst(
-				Effect.tryPromise({
-					try: next.fn,
-					catch: (error) => error,
-				}).pipe(
-					Effect.match({
-						onSuccess: (value) => {
-							if (next.getPriority() !== null) {
-								next.onDone(value);
-							}
-						},
-						onFailure: (error) => {
-							if (next.getPriority() !== null) {
-								next.onError(error);
-							}
-						},
+			running = next;
+			new Promise<unknown>((resolve) => resolve(next.fn())).then(
+				(value) =>
+					PubSub.publishUnsafe(changes, {
+						waiter: next,
+						deliver: () => next.onDone(value),
 					}),
-				),
-				Effect.gen(function* () {
-					while (next.getPriority() !== null) {
-						yield* PubSub.take(subscription);
-					}
-				}),
+				(error) =>
+					PubSub.publishUnsafe(changes, {
+						waiter: next,
+						deliver: () => next.onError(error),
+					}),
 			);
 		}
 	}),
