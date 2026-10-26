@@ -24,6 +24,7 @@ const drain = Effect.scoped(
 			PubSub.shutdown,
 		);
 		const take = PubSub.take(yield* PubSub.subscribe(changes));
+		const notify = () => PubSub.publishUnsafe(changes, null);
 		let running: Waiter | null = null;
 		yield* Effect.addFinalizer(() =>
 			Effect.sync(() => {
@@ -103,13 +104,13 @@ const drain = Effect.scoped(
 				return;
 			}
 
-			PubSub.publishUnsafe(changes, null);
+			notify();
 		};
 
 		wake = () => {
 			if (running === null || running.getPriority() === null) {
 				// Reentrant admissions must wait until their callback finishes.
-				queueMicrotask(() => PubSub.publishUnsafe(changes, null));
+				queueMicrotask(notify);
 			}
 		};
 
