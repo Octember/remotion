@@ -40,19 +40,20 @@ const drain = Effect.scoped(
 			running = null;
 			while (waiters.length > 0) {
 				const stale: Waiter[] = [];
-				let selected: Waiter | null = null;
+				let selected = -1;
 				let priority = 0;
-				for (const waiter of waiters) {
+				for (let index = 0; index < waiters.length; index++) {
+					const waiter = waiters[index];
 					const candidate = waiter.getPriority();
 					if (candidate === null) {
 						stale.push(waiter);
-					} else if (selected === null || candidate < priority) {
-						selected = waiter;
+					} else if (selected === -1 || candidate < priority) {
+						selected = index;
 						priority = candidate;
 					}
 				}
 
-				if (stale.length > 0 || selected === null) {
+				if (stale.length > 0 || selected === -1) {
 					for (const waiter of stale) {
 						waiters.splice(waiters.indexOf(waiter), 1);
 					}
@@ -68,8 +69,8 @@ const drain = Effect.scoped(
 					return;
 				}
 
-				const next = selected;
-				waiters.splice(waiters.indexOf(next), 1);
+				const next = waiters[selected];
+				waiters.splice(selected, 1);
 				running = next;
 				const finish = (deliver: () => void) => {
 					try {
