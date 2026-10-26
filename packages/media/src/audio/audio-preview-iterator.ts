@@ -1,3 +1,4 @@
+import {Effect, Exit, Scope} from 'effect';
 import type {AudioBufferSlice} from '../make-iterator-with-priming';
 
 export const HEALTHY_BUFFER_THRESHOLD_SECONDS = 1;
@@ -29,7 +30,7 @@ export const makeAudioIterator = ({
 	iterator,
 	unscheduleAudioNode,
 }: MakeAudioIteratorOptions) => {
-	let destroyed = false;
+	const scope = Scope.makeUnsafe();
 	const queuedAudioNodes: QueuedNode[] = [];
 	let mostRecentTimestamp = -Infinity;
 
@@ -60,19 +61,21 @@ export const makeAudioIterator = ({
 		return next;
 	};
 
+	Effect.runSync(
+		Scope.addFinalizer(
+			scope,
+			Effect.sync(() => {
+				cleanupAudioQueue();
+				iterator.return().catch(() => undefined);
+			}),
+		),
+	);
+
 	return {
-		destroy: () => {
-			cleanupAudioQueue();
-			destroyed = true;
-			// Returning an async generator can reject if its underlying media input
-			// was disposed. Destruction is fire-and-forget and has no caller to
-			// propagate to, so intentionally consume that teardown-only rejection.
-			iterator.return().catch(() => undefined);
-		},
+		scope,
+		destroy: () => Effect.runFork(Scope.close(scope, Exit.void)),
 		getNextFn,
-		isDestroyed: () => {
-			return destroyed;
-		},
+		isDestroyed: () => scope.state._tag === 'Closed',
 
 		addQueuedAudioNode: (queuedNode: QueuedNode) => {
 			queuedAudioNodes.push(queuedNode);

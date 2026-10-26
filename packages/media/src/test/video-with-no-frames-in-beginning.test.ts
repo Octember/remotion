@@ -130,10 +130,7 @@ test('same goes for audio', async () => {
 		drawDebugOverlay: () => {},
 	});
 
-	const nonceManager = makeNonceManager();
-
 	manager.startAudioIterator({
-		nonce: nonceManager.createAsyncOperation(),
 		playbackRate: 1,
 		startFromSecond: 0.06671494248275864,
 		unloopedStartFromSecond: 0.06671494248275864,
@@ -149,6 +146,7 @@ test('same goes for audio', async () => {
 	});
 
 	await manager.waitForNScheduledNodes(2);
+	const nonceManager = makeNonceManager();
 	manager.seek({
 		newTime: 0.10007241372413796,
 		unloopedNewTime: 0.10007241372413796,

@@ -143,6 +143,7 @@ const playAndPause = async ({
 
 		const resumeCallsDuringPlay = nativeResumeCalls;
 		let gainValuesDuringBufferResume: number[] = [];
+		let anchorAfterBufferResume: number | null = null;
 		if (bufferAfterPlay) {
 			if (!startBuffering) {
 				throw new Error('Expected buffering controls');
@@ -169,12 +170,19 @@ const playAndPause = async ({
 				await Promise.resolve();
 			});
 
+			const audioClock = playerRef.current?.getAudioClock();
+			if (!audioClock) {
+				throw new Error('Expected the Player audio clock');
+			}
+
+			(audioClock.context as unknown as TrackedAudioContext).currentTime = 5;
 			gainValues = [];
 			await act(async () => {
 				unblock();
 				await Promise.resolve();
 			});
 			gainValuesDuringBufferResume = gainValues;
+			anchorAfterBufferResume = audioClock.anchor.value;
 		}
 
 		gainValues = [];
@@ -189,6 +197,7 @@ const playAndPause = async ({
 			suspendCallsDuringPause: nativeSuspendCalls,
 			gainValuesDuringPause: gainValues,
 			gainValuesDuringBufferResume,
+			anchorAfterBufferResume,
 		};
 	} finally {
 		startBuffering = null;
@@ -222,10 +231,12 @@ test('_experimentalKeepAudioContextAlive silences through the gain instead of su
 });
 
 test('_experimentalKeepAudioContextAlive resumes immediately after buffering', async () => {
-	const {gainValuesDuringBufferResume} = await playAndPause({
-		_experimentalKeepAudioContextAlive: true,
-		bufferAfterPlay: true,
-	});
+	const {gainValuesDuringBufferResume, anchorAfterBufferResume} =
+		await playAndPause({
+			_experimentalKeepAudioContextAlive: true,
+			bufferAfterPlay: true,
+		});
 
 	expect(gainValuesDuringBufferResume).toContain(1);
+	expect(anchorAfterBufferResume).toBe(5);
 });

@@ -1,11 +1,12 @@
-import {ALL_FORMATS, Input, UrlSource} from 'mediabunny';
+import {ALL_FORMATS, AudioBufferSink, Input, UrlSource} from 'mediabunny';
 import type {ScheduleAudioNodeResult} from 'remotion';
-import {expect, test} from 'vitest';
+import {expect, test, vi} from 'vitest';
 import {
 	anchorToContinuousTime,
 	audioIteratorManager,
 	hasEnoughAudioToStartPlayback,
 } from '../audio-iterator-manager';
+import {makeIteratorWithPriming} from '../make-iterator-with-priming';
 import {makeNonceManager} from '../nonce-manager';
 
 const prepare = async (options?: {
@@ -18,6 +19,7 @@ const prepare = async (options?: {
 	sequenceDurationInSeconds?: number;
 	startTime?: number;
 	loop?: boolean;
+	onScheduleAudioNode?: (node: AudioBufferSourceNode) => void;
 }) => {
 	const {
 		src = 'https://remotion.media/video.mp4',
@@ -29,6 +31,7 @@ const prepare = async (options?: {
 		sequenceDurationInSeconds = 10,
 		startTime = 0,
 		loop = false,
+		onScheduleAudioNode = null,
 	} = options ?? {};
 	const input = new Input({
 		source: new UrlSource(src),
@@ -86,12 +89,13 @@ const prepare = async (options?: {
 	const waiters: {count: number; resolve: () => void}[] = [];
 
 	const scheduleAudioNode = (
-		_node: AudioBufferSourceNode,
+		node: AudioBufferSourceNode,
 		mediaTimestamp: number,
 		_originalUnloopedMediaTimestamp: number,
 		sourceOffsetInSeconds: number,
 		_sourceDurationInSeconds: number,
 	): ScheduleAudioNodeResult => {
+		onScheduleAudioNode?.(node);
 		scheduledChunks.push(mediaTimestamp);
 		scheduledStartOffsets.push(sourceOffsetInSeconds);
 		for (let i = waiters.length - 1; i >= 0; i--) {
@@ -142,6 +146,11 @@ const prepare = async (options?: {
 		seek,
 		audioContextCurrentTime,
 		getPlaybackUnblocks: () => playbackUnblocks,
+		dispose: async () => {
+			manager.dispose();
+			input.dispose();
+			await audioContext.close();
+		},
 	};
 };
 
@@ -171,6 +180,77 @@ test('audio startup buffering is based on duration instead of chunk count', () =
 	expect(hasEnoughAudioToStartPlayback(0.099)).toBe(false);
 	expect(hasEnoughAudioToStartPlayback(0.1)).toBe(true);
 	expect(hasEnoughAudioToStartPlayback(0.5)).toBe(true);
+});
+
+test('AAC playback at zero includes the negative encoder priming packets', async () => {
+	const input = new Input({
+		source: new UrlSource('/video.mp4'),
+		formats: ALL_FORMATS,
+	});
+	try {
+		const track = await input.getPrimaryAudioTrack();
+		if (!track) {
+			throw new Error('Expected the local AAC fixture to contain audio');
+		}
+
+		const sink = new AudioBufferSink(track);
+		const reference = sink.buffers(-0.5, 0.1);
+		let expected = await reference.next();
+		while (
+			expected.value &&
+			expected.value.timestamp + expected.value.duration <= 0
+		) {
+			expected = await reference.next();
+		}
+
+		const primed = makeIteratorWithPriming({
+			audioSink: sink,
+			timeToSeek: 0,
+			maximumTimestamp: 0.1,
+		});
+		const actual = await primed.next();
+		expect(actual.value?.timelineTimestamp).toBe(0);
+		expect(actual.value?.buffer.buffer.getChannelData(0)).toEqual(
+			expected.value?.buffer.getChannelData(0),
+		);
+		await primed.return();
+		await reference.return();
+	} finally {
+		input.dispose();
+	}
+});
+
+test('a native scheduling failure unblocks playback and retries an identical seek', async () => {
+	let attempts = 0;
+	const disconnections: (() => number)[] = [];
+	const {manager, seek, scheduledChunks, getPlaybackUnblocks, dispose} =
+		await prepare({
+			src: '/video.mp4',
+			onScheduleAudioNode: (node) => {
+				attempts++;
+				if (attempts === 1) {
+					const disconnect = vi.spyOn(node, 'disconnect');
+					disconnections.push(() => disconnect.mock.calls.length);
+					node.start(-1);
+				}
+			},
+		});
+	try {
+		seek({time: 0});
+		await expect
+			.poll(() => manager.getAudioBufferIterator()?.isDestroyed())
+			.toBe(true);
+		expect(getPlaybackUnblocks()).toBe(1);
+		expect(scheduledChunks).toEqual([]);
+		expect(disconnections.map((count) => count())).toEqual([1]);
+		seek({time: 0});
+		await manager.waitForNScheduledNodes(6);
+		expect(manager.getAudioIteratorsCreated()).toBe(2);
+		expect(scheduledChunks[0]).toBe(0);
+		expect(getPlaybackUnblocks()).toBe(2);
+	} finally {
+		await dispose();
+	}
 });
 
 test('PCM chunks unblock playback based on duration before six chunks or EOF', async () => {

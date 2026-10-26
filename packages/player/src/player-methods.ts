@@ -12,6 +12,12 @@ export type PlayerMethods = ThumbnailMethods & {
 	toggle: (e?: SyntheticEvent) => void;
 	seekTo: (frame: number) => void;
 	getCurrentFrame: () => number;
+	getAudioClock: () => {
+		context: AudioContext;
+		anchor: {readonly value: number};
+		fps: number;
+		playbackRate: number;
+	} | null;
 	requestFullscreen: () => void;
 	exitFullscreen: () => void;
 	isFullscreen: () => boolean;

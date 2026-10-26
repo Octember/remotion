@@ -143,6 +143,19 @@ const PlayerUI: React.ForwardRefRenderFunction<
 	ref,
 ) => {
 	const config = Internals.useUnsafeVideoConfig();
+	const sharedAudioContext = useContext(Internals.SharedAudioContext);
+	const audioClock = useMemo(
+		() =>
+			sharedAudioContext?.audioContext && config
+				? {
+						context: sharedAudioContext.audioContext,
+						anchor: sharedAudioContext.audioSyncAnchor,
+						fps: config.fps,
+						playbackRate,
+					}
+				: null,
+		[sharedAudioContext, config, playbackRate],
+	);
 	const video = Internals.useVideo();
 	const container = useRef<HTMLDivElement>(null);
 	const canvasSize = useElementSize(container, {
@@ -407,6 +420,7 @@ const PlayerUI: React.ForwardRefRenderFunction<
 			toggle,
 			getContainerNode: () => container.current,
 			getCurrentFrame: player.getCurrentFrame,
+			getAudioClock: () => audioClock,
 			isPlaying: player.isPlaying,
 			seekTo: (f) => {
 				const lastFrame = durationInFrames - 1;
@@ -481,6 +495,7 @@ const PlayerUI: React.ForwardRefRenderFunction<
 		};
 		return Object.assign(player.emitter, methods);
 	}, [
+		audioClock,
 		durationInFrames,
 		exitFullscreen,
 		loop,

@@ -22,6 +22,7 @@
 		"make": "tsgo && bun --env-file=../.env.bundle bundle.ts"
 	},
 	"dependencies": {
+		"effect": "4.0.6",
 		"mediabunny": "catalog:",
 		"remotion": "workspace:*",
 		"zod": "catalog:"

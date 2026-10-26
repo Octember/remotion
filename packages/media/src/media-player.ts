@@ -17,7 +17,6 @@ import {
 	getScheduledTime,
 	getTrimStartForAudioNode,
 } from './audio/get-scheduled-time';
-import {processNext} from './audio/sort-by-priority';
 import {drawPreviewOverlay} from './debug-overlay/preview-overlay';
 import {acquireSharedInput} from './get-shared-input';
 import {calculateEndTime, getTimeInSeconds} from './get-time-in-seconds';
@@ -415,7 +414,6 @@ export class MediaPlayer {
 				await Promise.all([
 					this.audioIteratorManager
 						? this.audioIteratorManager.startAudioIterator({
-								nonce,
 								playbackRate: this.playbackRate * this.globalPlaybackRate,
 								startFromSecond: startTime,
 								unloopedStartFromSecond: startTimeUnresolved,
@@ -668,12 +666,12 @@ export class MediaPlayer {
 
 	public setIsPremounting(isPremounting: boolean): void {
 		this.premountAwareDelayPlayback.setIsPremounting(isPremounting);
-		processNext();
+		this.audioIteratorManager?.wakeScheduler();
 	}
 
 	public setIsPostmounting(isPostmounting: boolean): void {
 		this.premountAwareDelayPlayback.setIsPostmounting(isPostmounting);
-		processNext();
+		this.audioIteratorManager?.wakeScheduler();
 	}
 
 	public async setLoop(
@@ -735,7 +733,7 @@ export class MediaPlayer {
 		// Mark all async operations as stale
 		this.nonceManager.createAsyncOperation();
 		this.videoIteratorManager?.destroy();
-		this.audioIteratorManager?.destroyIterator();
+		this.audioIteratorManager?.dispose();
 		// Release our reference to the shared Input; it is only disposed once the
 		// last MediaPlayer using this src releases it.
 		this.releaseInput();

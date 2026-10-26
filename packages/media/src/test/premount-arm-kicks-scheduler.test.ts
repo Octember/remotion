@@ -1,20 +1,28 @@
+import {Effect, Fiber} from 'effect';
 import type {useBufferState} from 'remotion';
 import {expect, test} from 'vitest';
-import {waitForTurn} from '../audio/sort-by-priority';
+import {acquireAudioScheduler} from '../audio/audio-scheduler';
 import {MediaPlayer} from '../media-player';
 
-const makePlayer = ({
+const makePlayer = async ({
 	isPremounting,
 	isPostmounting,
 }: {
 	isPremounting: boolean;
 	isPostmounting: boolean;
 }) => {
-	return new MediaPlayer({
+	const audioContext = new AudioContext();
+	const player = new MediaPlayer({
 		canvas: null,
-		src: '/bigbuckbunny.mp4',
+		src: '/junk.wav',
 		logLevel: 'info',
-		sharedAudioContext: null,
+		sharedAudioContext: {
+			audioContext,
+			gainNode: audioContext.createGain(),
+			audioSyncAnchor: {value: 0},
+			scheduleAudioNode: () => ({type: 'not-started', reason: 'muted'}),
+			unscheduleAudioNode: () => {},
+		},
 		loop: false,
 		trimBefore: undefined,
 		trimAfter: undefined,
@@ -39,6 +47,17 @@ const makePlayer = ({
 		getEffects: () => [],
 		getEffectChainState: () => null,
 	});
+	expect((await player.initialize(0, true, 1)).type).toBe('success');
+	const scheduler = acquireAudioScheduler(audioContext);
+	return {
+		player,
+		scheduler,
+		dispose: async () => {
+			await player.dispose();
+			scheduler.release();
+			await audioContext.close();
+		},
+	};
 };
 
 const sleep = (ms: number) =>
@@ -46,24 +65,30 @@ const sleep = (ms: number) =>
 		setTimeout(resolve, ms);
 	});
 
-const parkWaiter = () => {
+const parkWaiter = (scheduler: ReturnType<typeof acquireAudioScheduler>) => {
 	const events: string[] = [];
 	let priority: number | null = 3;
 
-	waitForTurn({
-		getPriority: () => priority,
-		fn: () => Promise.resolve('deferred'),
-		onDone: (_, triggerNext) => {
-			events.push('done');
-			triggerNext();
-		},
-		onError: (err) => {
-			events.push((err as Error).name);
-		},
-	});
+	const fiber = Effect.runFork(
+		scheduler
+			.run(
+				() => priority,
+				Effect.sync(() => {
+					events.push('done');
+				}),
+			)
+			.pipe(
+				Effect.catch((error) =>
+					Effect.sync(() => {
+						events.push(error.name);
+					}),
+				),
+			),
+	);
 
 	return {
 		events,
+		fiber,
 		setPriority: (newPriority: number | null) => {
 			priority = newPriority;
 		},
@@ -71,41 +96,55 @@ const parkWaiter = () => {
 };
 
 test('ending premounting gives deferred audio waiters a turn', async () => {
-	const {events, setPriority} = parkWaiter();
-	const mediaPlayer = makePlayer({isPremounting: true, isPostmounting: false});
+	const {player, scheduler, dispose} = await makePlayer({
+		isPremounting: true,
+		isPostmounting: false,
+	});
+	const {events, setPriority, fiber} = parkWaiter(scheduler);
+	await sleep(50);
 
 	setPriority(1);
 	await sleep(50);
 	expect(events).toEqual([]);
 
-	mediaPlayer.setIsPremounting(false);
-	await sleep(50);
+	player.setIsPremounting(false);
+	await Effect.runPromise(Fiber.join(fiber));
 	expect(events).toEqual(['done']);
+	await dispose();
 });
 
 test('ending postmounting gives deferred audio waiters a turn', async () => {
-	const {events, setPriority} = parkWaiter();
-	const mediaPlayer = makePlayer({isPremounting: false, isPostmounting: true});
+	const {player, scheduler, dispose} = await makePlayer({
+		isPremounting: false,
+		isPostmounting: true,
+	});
+	const {events, setPriority, fiber} = parkWaiter(scheduler);
+	await sleep(50);
 
 	setPriority(1);
 	await sleep(50);
 	expect(events).toEqual([]);
 
-	mediaPlayer.setIsPostmounting(false);
-	await sleep(50);
+	player.setIsPostmounting(false);
+	await Effect.runPromise(Fiber.join(fiber));
 	expect(events).toEqual(['done']);
+	await dispose();
 });
 
 test('the kick keeps deferring waiters beyond the horizon and sweeps stale ones', async () => {
-	const {events, setPriority} = parkWaiter();
-	const mediaPlayer = makePlayer({isPremounting: true, isPostmounting: false});
+	const {player, scheduler, dispose} = await makePlayer({
+		isPremounting: true,
+		isPostmounting: false,
+	});
+	const {events, setPriority, fiber} = parkWaiter(scheduler);
 
-	mediaPlayer.setIsPremounting(false);
+	player.setIsPremounting(false);
 	await sleep(50);
 	expect(events).toEqual([]);
 
 	setPriority(null);
-	mediaPlayer.setIsPremounting(true);
-	await sleep(50);
-	expect(events).toEqual(['StaleWaiterError']);
+	player.setIsPremounting(true);
+	await Effect.runPromise(Fiber.join(fiber));
+	expect(events).toEqual(['StaleAudioRequestError']);
+	await dispose();
 });

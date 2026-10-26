@@ -1,3 +1,4 @@
+import {Cause, Effect, Exit, Fiber, PubSub, Scope} from 'effect';
 import {
 	AudioBufferSink,
 	InputDisposedError,
@@ -12,13 +13,12 @@ import {
 	type AudioIterator,
 	type QueuedPeriod,
 } from './audio/audio-preview-iterator';
+import {
+	acquireAudioScheduler,
+	StaleAudioRequestError,
+} from './audio/audio-scheduler';
 import {getScheduledTime} from './audio/get-scheduled-time';
 import {pitchShiftAudioIterator} from './audio/pitch-shift';
-import {
-	processNext,
-	StaleWaiterError,
-	waitForTurn,
-} from './audio/sort-by-priority';
 import type {DelayPlaybackIfNotPremounting} from './delay-playback-if-not-premounting';
 import {
 	makeIteratorWithPriming,
@@ -97,6 +97,9 @@ export const audioIteratorManager = ({
 	let muted = initialMuted;
 	let currentVolume = Math.max(0, initialVolume);
 	let currentToneFrequency = toneFrequency;
+	const scope = Scope.makeUnsafe();
+	const scheduler = acquireAudioScheduler(sharedAudioContext.audioContext);
+	const scheduledNodes = Effect.runSync(PubSub.unbounded<void>());
 	let currentSeek: {
 		time: number;
 		playbackRate: number;
@@ -111,6 +114,16 @@ export const audioIteratorManager = ({
 	const gainNode = sharedAudioContext.audioContext.createGain();
 	gainNode.gain.value = muted ? 0 : currentVolume;
 	gainNode.connect(sharedAudioContext.gainNode);
+	Effect.runSync(
+		Scope.addFinalizer(
+			scope,
+			Effect.sync(() => {
+				scheduler.release();
+				gainNode.disconnect();
+			}),
+		),
+	);
+	Effect.runSync(Scope.addFinalizer(scope, PubSub.shutdown(scheduledNodes)));
 
 	const audioSink = new AudioBufferSink(audioTrack);
 	let audioBufferIterator: AudioIterator | null = null;
@@ -129,31 +142,20 @@ export const audioIteratorManager = ({
 		}
 	};
 
-	const pendingScheduleWaiters: {
-		remaining: number;
-		resolve: () => void;
-	}[] = [];
-
-	const notifyNodeScheduled = () => {
-		for (let i = pendingScheduleWaiters.length - 1; i >= 0; i--) {
-			const waiter = pendingScheduleWaiters[i];
-			waiter.remaining--;
-			if (waiter.remaining <= 0) {
-				waiter.resolve();
-				pendingScheduleWaiters.splice(i, 1);
-			}
-		}
-	};
-
-	const waitForNScheduledNodes = (n: number) => {
-		if (n <= 0) {
-			return Promise.resolve();
-		}
-
-		return new Promise<void>((resolve) => {
-			pendingScheduleWaiters.push({remaining: n, resolve});
-		});
-	};
+	const waitForNScheduledNodes = (n: number) =>
+		Effect.runPromise(
+			Effect.scoped(
+				Effect.gen(function* () {
+					const events = yield* PubSub.subscribe(scheduledNodes);
+					for (let i = 0; i < n; i++) {
+						yield* PubSub.take(events);
+					}
+				}),
+			).pipe(
+				Effect.forkIn(scope, {startImmediately: true}),
+				Effect.flatMap(Fiber.join),
+			),
+		);
 
 	const scheduleAudioChunk = ({
 		buffer,
@@ -187,13 +189,19 @@ export const audioIteratorManager = ({
 		node.playbackRate.value = playbackRate;
 		node.connect(gainNode);
 
-		const started = scheduleAudioNode(
-			node,
-			mediaTimestamp,
-			originalUnloopedMediaTimestamp,
-			sourceOffsetInSeconds,
-			sourceDurationInSeconds,
-		);
+		let started: ScheduleAudioNodeResult;
+		try {
+			started = scheduleAudioNode(
+				node,
+				mediaTimestamp,
+				originalUnloopedMediaTimestamp,
+				sourceOffsetInSeconds,
+				sourceDurationInSeconds,
+			);
+		} catch (error) {
+			node.disconnect();
+			throw error;
+		}
 
 		if (started.type === 'not-started') {
 			Internals.Log.verbose(
@@ -269,126 +277,7 @@ export const audioIteratorManager = ({
 		drawDebugOverlay();
 	};
 
-	const proceedScheduling = ({
-		iterator,
-		nonce,
-		getTargetTime,
-		playbackRate,
-		scheduleAudioNode,
-		onScheduled,
-		onDestroyed,
-		onDone,
-		logLevel,
-		currentTime,
-		getAudioContextCurrentTimeMockedInTest,
-	}: {
-		iterator: AudioIterator;
-		nonce: Nonce;
-		getTargetTime: (
-			mediaTimestamp: number,
-			currentTime: number,
-		) => number | null;
-		playbackRate: number;
-		scheduleAudioNode: ScheduleAudioNode;
-		onScheduled: (
-			sourceDurationInSeconds: number,
-			timelineTimestamp: number,
-		) => void;
-		onDone: () => void;
-		onDestroyed: () => void;
-		logLevel: LogLevel;
-		currentTime: number;
-		getAudioContextCurrentTimeMockedInTest: () => number;
-	}) => {
-		waitForTurn({
-			getPriority: () => {
-				if (iterator.isDestroyed()) {
-					onDestroyed();
-					return null;
-				}
-
-				const guessedNextTimestamp = iterator.guessNextTimestamp();
-				const targetTime = getTargetTime(guessedNextTimestamp, currentTime);
-				if (targetTime === null) {
-					// Time will not be mounted
-					return null;
-				}
-
-				const scheduledTime = getScheduledTime({
-					mediaTimestamp: guessedNextTimestamp,
-					targetTime,
-					currentTime,
-					sequenceStartTime: getStartTime(),
-				});
-
-				return scheduledTime - getAudioContextCurrentTimeMockedInTest();
-			},
-			fn: () => iterator.getNextFn(),
-			onDone: (result, next) => {
-				if (iterator.isDestroyed()) {
-					next();
-					onDestroyed();
-					return;
-				}
-
-				// We schedule even if nonce.isStale(), because the iterator is still alive and the seek did not destroy the
-				// iterator. So the seek was non-destructive, and the schedule valid. The iterator already progressed, we cannot get it again.
-
-				if (!result.value) {
-					// media ended
-					next();
-					onDone();
-					return;
-				}
-
-				onScheduled(
-					result.value.sourceDurationInSeconds,
-					result.value.timelineTimestamp,
-				);
-				notifyNodeScheduled();
-
-				onAudioChunk({
-					buffer: result.value,
-					playbackRate,
-					scheduleAudioNode,
-					logLevel,
-				});
-				proceedScheduling({
-					iterator,
-					nonce,
-					getTargetTime,
-					playbackRate,
-					scheduleAudioNode,
-					onScheduled,
-					onDestroyed,
-					onDone,
-					logLevel,
-					currentTime,
-					getAudioContextCurrentTimeMockedInTest,
-				});
-				next();
-			},
-			onError: (e) => {
-				if (e instanceof InputDisposedError) {
-					// iterator was disposed by a newer startAudioIterator call
-					// this is expected during rapid seeking
-					onDestroyed();
-					return;
-				}
-
-				if (e instanceof StaleWaiterError) {
-					onDestroyed();
-					// iterator was stale before it got its turn
-					return;
-				}
-
-				throw e;
-			},
-		});
-	};
-
 	const startAudioIterator = ({
-		nonce,
 		playbackRate,
 		startFromSecond,
 		unloopedStartFromSecond,
@@ -401,7 +290,6 @@ export const audioIteratorManager = ({
 	}: {
 		startFromSecond: number;
 		unloopedStartFromSecond: number;
-		nonce: Nonce;
 		playbackRate: number;
 		scheduleAudioNode: ScheduleAudioNode;
 		getTargetTime: (
@@ -413,7 +301,7 @@ export const audioIteratorManager = ({
 		unscheduleAudioNode: (node: AudioBufferSourceNode) => void;
 		getAudioContextCurrentTimeMockedInTest: () => number;
 	}) => {
-		if (muted) {
+		if (muted || scope.state._tag === 'Closed') {
 			return;
 		}
 
@@ -461,48 +349,98 @@ export const audioIteratorManager = ({
 		audioBufferIterator = iterator;
 
 		let bufferedUntil = startFromSecond;
-		let hasUnblockedPlayback = false;
 		const unblockPlayback = () => {
-			if (hasUnblockedPlayback) {
-				return;
+			if (currentDelayHandle === delayHandle) {
+				currentDelayHandle = null;
+				delayHandle.unblock();
 			}
-
-			hasUnblockedPlayback = true;
-			delayHandle.unblock();
 		};
 
-		proceedScheduling({
-			iterator,
-			nonce,
-			getTargetTime,
-			playbackRate,
-			scheduleAudioNode,
-			onScheduled: (sourceDurationInSeconds, timelineTimestamp) => {
-				bufferedUntil = Math.max(
-					bufferedUntil,
-					timelineTimestamp + sourceDurationInSeconds,
-				);
-				const bufferedDuration = bufferedUntil - startFromSecond;
-				// Need to schedule a bit into the future to unblock the buffer state,
-				// otherwise we might be scheduling too late. This must be based on
-				// timeline coverage, not audible duration or chunk count: silence is
-				// already safe to play, and large PCM chunks can exceed the scheduling
-				// horizon before enough chunks are queued:
-				// https://github.com/remotion-dev/remotion/issues/9394
-				if (hasEnoughAudioToStartPlayback(bufferedDuration)) {
-					unblockPlayback();
-				}
-			},
-			onDestroyed: () => {
-				unblockPlayback();
-			},
-			onDone: () => {
-				unblockPlayback();
-			},
-			logLevel,
-			currentTime: sharedAudioContext.audioContext.currentTime,
-			getAudioContextCurrentTimeMockedInTest,
-		});
+		const {currentTime} = sharedAudioContext.audioContext;
+		const getPriority = () => {
+			const mediaTimestamp = iterator.guessNextTimestamp();
+			const targetTime = getTargetTime(mediaTimestamp, currentTime);
+			return targetTime === null
+				? null
+				: getScheduledTime({
+						mediaTimestamp,
+						targetTime,
+						currentTime,
+						sequenceStartTime: getStartTime(),
+					}) - getAudioContextCurrentTimeMockedInTest();
+		};
+
+		Effect.runSync(
+			Effect.forkIn(
+				Effect.gen(function* () {
+					while (true) {
+						const result = yield* scheduler.run(
+							getPriority,
+							Effect.tryPromise({
+								try: () => iterator.getNextFn(),
+								catch: (error) => error,
+							}),
+						);
+						if (!result.value) {
+							return;
+						}
+
+						bufferedUntil = Math.max(
+							bufferedUntil,
+							result.value.timelineTimestamp +
+								result.value.sourceDurationInSeconds,
+						);
+						if (
+							hasEnoughAudioToStartPlayback(bufferedUntil - startFromSecond)
+						) {
+							unblockPlayback();
+						}
+
+						PubSub.publishUnsafe(scheduledNodes, undefined);
+						onAudioChunk({
+							buffer: result.value,
+							playbackRate,
+							scheduleAudioNode,
+							logLevel,
+						});
+					}
+				}).pipe(
+					Effect.catchCause((cause) =>
+						Effect.uninterruptible(
+							Effect.gen(function* () {
+								yield* Effect.sync(() => {
+									if (
+										!Cause.hasInterruptsOnly(cause) &&
+										audioBufferIterator === iterator
+									) {
+										currentSeek = null;
+									}
+
+									iterator.destroy();
+								});
+								const error = Cause.squash(cause);
+								if (
+									Cause.hasInterruptsOnly(cause) ||
+									error instanceof InputDisposedError ||
+									error instanceof StaleAudioRequestError
+								) {
+									return;
+								}
+
+								Internals.Log.error(
+									{logLevel, tag: 'audio-scheduling'},
+									'Audio scheduling failed',
+									error,
+								);
+								return yield* Effect.failCause(cause);
+							}),
+						),
+					),
+					Effect.ensuring(Effect.sync(unblockPlayback)),
+				),
+				iterator.scope,
+			),
+		);
 	};
 
 	const seek = ({
@@ -604,7 +542,7 @@ export const audioIteratorManager = ({
 				queuedPeriodMinusLatency,
 			);
 			if (currentTimeIsAlreadyQueued) {
-				processNext();
+				scheduler.wake();
 				// current time is scheduled, will keep scheduling
 				return;
 			}
@@ -620,7 +558,7 @@ export const audioIteratorManager = ({
 				(currentIteratorTimestamp < timeToCheck &&
 					Math.abs(currentIteratorTimestamp - timeToCheck) < 1)
 			) {
-				processNext();
+				scheduler.wake();
 				// The iterator has either advanced beyond the current time, meaning
 				// the gap is known silence, or is less than 1 second behind. Let it run.
 				return;
@@ -628,7 +566,6 @@ export const audioIteratorManager = ({
 		}
 
 		startAudioIterator({
-			nonce,
 			playbackRate,
 			startFromSecond: newTime,
 			unloopedStartFromSecond: unloopedNewTime,
@@ -645,6 +582,12 @@ export const audioIteratorManager = ({
 
 	return {
 		startAudioIterator,
+		wakeScheduler: scheduler.wake,
+		dispose: () => {
+			audioBufferIterator?.destroy();
+			unblockCurrentDelayHandle();
+			Effect.runFork(Scope.close(scope, Exit.void));
+		},
 		getAudioBufferIterator: () => audioBufferIterator,
 		getCurrentAnchor: () => currentAnchor,
 		destroyIterator: () => {

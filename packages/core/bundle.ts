@@ -12,40 +12,32 @@ if (!semver.satisfies(version, '^1.1.7')) {
 	process.exit(1);
 }
 
-const output = await build({
-	entrypoints: ['src/index.ts'],
-	naming: '[name].mjs',
-	target: 'browser',
-	external: ['remotion', 'remotion/no-react', 'react', 'react-dom'],
-});
+for (const format of ['esm', 'cjs'] as const) {
+	const output = await build({
+		entrypoints: ['src/index.ts', 'src/version.ts', 'src/no-react.ts'],
+		outdir: `dist/${format}`,
+		naming: `[name].${format === 'esm' ? 'mjs' : 'js'}`,
+		format,
+		target: 'browser',
+		external: [
+			'remotion',
+			'remotion/no-react',
+			'react',
+			'react-dom',
+			...(format === 'esm' ? ['effect'] : []),
+		],
+	});
+	if (!output.success) {
+		throw new AggregateError(output.logs, 'Failed to build remotion');
+	}
 
-const [file] = output.outputs;
-const text = await file.text();
-await Bun.write('dist/esm/index.mjs', text);
-
-const versionOutput = await build({
-	entrypoints: ['src/version.ts'],
-	naming: '[name].mjs',
-	target: 'browser',
-});
-
-const [versionFile] = versionOutput.outputs;
-await Bun.write('dist/esm/version.mjs', await versionFile.text());
-
-const noReactOutput = await build({
-	entrypoints: ['src/no-react.ts'],
-	naming: '[name].mjs',
-	target: 'browser',
-	external: ['remotion', 'react', 'react-dom'],
-});
-const [noReactFile] = noReactOutput.outputs;
-const noReactText = await noReactFile.text();
-
-if (noReactText.includes('createContext')) {
-	throw new Error('remotion/no-react.mjs should not import React');
+	const noReactFile = output.outputs.find((file) =>
+		file.path.includes('/no-react.'),
+	)!;
+	if ((await noReactFile.text()).includes('createContext')) {
+		throw new Error('remotion/no-react should not import React');
+	}
 }
-
-await Bun.write('dist/esm/no-react.mjs', noReactText);
 
 export {};
 
