@@ -324,9 +324,8 @@ export const audioIteratorManager = ({
 				return scheduledTime - getAudioContextCurrentTimeMockedInTest();
 			},
 			fn: () => iterator.getNextFn(),
-			onDone: (result, next) => {
+			onDone: (result) => {
 				if (iterator.isDestroyed()) {
-					next();
 					onDestroyed();
 					return;
 				}
@@ -336,7 +335,6 @@ export const audioIteratorManager = ({
 
 				if (!result.value) {
 					// media ended
-					next();
 					onDone();
 					return;
 				}
@@ -366,7 +364,6 @@ export const audioIteratorManager = ({
 					currentTime,
 					getAudioContextCurrentTimeMockedInTest,
 				});
-				next();
 			},
 			onError: (e) => {
 				if (e instanceof InputDisposedError) {

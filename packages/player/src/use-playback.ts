@@ -1,12 +1,11 @@
+import {Clock, Effect} from 'effect';
 import {useLayoutEffect} from 'react';
-/* eslint-disable @typescript-eslint/no-use-before-define */
 import {useContext, useEffect, useRef} from 'react';
 import {Internals} from 'remotion';
 import type {RemotionAudioContextState} from 'remotion';
 import type {BrowserMediaControlsBehavior} from './browser-mediasession.js';
 import {useBrowserMediaSession} from './browser-mediasession.js';
-import {calculateNextFrame} from './calculate-next-frame.js';
-import {useIsBackgrounded} from './is-backgrounded.js';
+import {playbackClock} from './playback-clock.js';
 import {setGlobalTimeAnchor} from './set-global-time-anchor.js';
 import {type UsePlayerMethods, usePlayerMethods} from './use-player-methods.js';
 
@@ -60,12 +59,7 @@ export const usePlayback = ({
 	);
 	const logLevel = Internals.useLogLevel();
 
-	// requestAnimationFrame() does not work if the tab is not active.
-	// This means that audio will keep playing even if it has ended.
-	// In that case, we use setTimeout() instead.
-	const isBackgroundedRef = useIsBackgrounded();
-
-	const lastTimeUpdateTimestamp = useRef<number>(0);
+	const lastTimeUpdateTimestamp = useRef(BigInt(0));
 
 	useBrowserMediaSession({
 		browserMediaControlsBehavior,
@@ -184,171 +178,29 @@ export const usePlayback = ({
 			}
 		}
 
-		let hasBeenStopped = false;
-		let audioContextFailed = false;
-		let reqAnimFrameCall:
-			| {
-					type: 'raf';
-					id: number;
-			  }
-			| {
-					type: 'timeout';
-					id: Timer;
-			  }
-			| null = null;
-		let startedTime = performance.now();
-		let framesAdvanced = 0;
-
-		const cancelQueuedFrame = () => {
-			if (reqAnimFrameCall !== null) {
-				if (reqAnimFrameCall.type === 'raf') {
-					cancelAnimationFrame(reqAnimFrameCall.id);
-				} else {
-					clearTimeout(reqAnimFrameCall.id);
-				}
-			}
-		};
-
-		const stop = () => {
-			hasBeenStopped = true;
-			cancelQueuedFrame();
-		};
-
-		const callback = () => {
-			if (hasBeenStopped) {
-				return;
-			}
-
-			if (!isPlaying()) {
-				sharedAudioContext?.suspend?.();
-				return;
-			}
-
-			if (!muted && !audioContextFailed && !isBuffering()) {
-				sharedAudioContext?.resume?.();
-			}
-
-			const time = performance.now() - startedTime;
-			const actualLastFrame = outFrame ?? config.durationInFrames - 1;
-			const actualFirstFrame = inFrame ?? 0;
-
-			const currentFrame = getCurrentFrame();
-			const {nextFrame, framesToAdvance, hasEnded} = calculateNextFrame({
-				time,
-				currentFrame,
-				playbackSpeed: playbackRate,
+		return Effect.runCallback(
+			playbackClock({
 				fps: config.fps,
-				actualFirstFrame,
-				actualLastFrame,
-				framesAdvanced,
-				shouldLoop: loop,
-			});
-
-			framesAdvanced += framesToAdvance;
-
-			if (
-				nextFrame !== getCurrentFrame() &&
-				(!hasEnded || moveToBeginningWhenEnded) &&
-				!isBuffering()
-			) {
-				setFrame((c) => ({...c, [config.id]: nextFrame}));
-			}
-
-			if (hasEnded) {
-				stop();
-				pause();
-				emitter.dispatchEnded();
-				return;
-			}
-
-			queueNextFrame();
-		};
-
-		const queueNextFrame = () => {
-			if (hasBeenStopped) {
-				return;
-			}
-
-			const getIsResumingAudioContext = audioContextFailed
-				? null
-				: (sharedAudioContext?.getIsResumingAudioContext?.() ?? null);
-			if (getIsResumingAudioContext !== null && !muted) {
-				getIsResumingAudioContext.then((result) => {
-					if (hasBeenStopped) {
-						return;
-					}
-
-					if (result === 'failed') {
-						audioContextFailed = true;
-						sharedAudioContext?.suspend();
-						setPlayerMuted(true);
-					}
-
-					startedTime = performance.now();
-					framesAdvanced = 0;
-					queueNextFrame();
-				});
-
-				return;
-			}
-
-			if (isBuffering()) {
-				if (!muted && !audioContextFailed) {
-					sharedAudioContext?.suspend?.();
-				}
-
-				const unsubscribe = subscribeBuffering((state) => {
-					if (state.buffering) {
-						return;
-					}
-
-					unsubscribe();
-					if (
-						!muted &&
-						!audioContextFailed &&
-						sharedAudioContext?._experimentalKeepAudioContextAlive
-					) {
-						sharedAudioContext.resume();
-					}
-
-					startedTime = performance.now();
-					framesAdvanced = 0;
-					queueNextFrame();
-				});
-				return;
-			}
-
-			if (isBackgroundedRef.current) {
-				reqAnimFrameCall = {
-					type: 'timeout',
-					// Note: Most likely, this will not be 1000 / fps, but the browser will throttle it to ~1/sec.
-					id: setTimeout(callback, 1000 / config.fps),
-				};
-				return;
-			}
-
-			reqAnimFrameCall = {type: 'raf', id: requestAnimationFrame(callback)};
-		};
-
-		queueNextFrame();
-
-		const onVisibilityChange = () => {
-			if (document.visibilityState === 'visible') {
-				return;
-			}
-
-			// If tab goes into the background, cancel requestAnimationFrame() and update immediately.
-			// , so the transition to setTimeout() can be fulfilled.
-			cancelQueuedFrame();
-			callback();
-		};
-
-		window.addEventListener('visibilitychange', onVisibilityChange);
-
-		return () => {
-			window.removeEventListener('visibilitychange', onVisibilityChange);
-			stop();
-		};
+				firstFrame: inFrame ?? 0,
+				lastFrame: outFrame ?? config.durationInFrames - 1,
+				playbackRate,
+				loop,
+				moveToBeginningWhenEnded,
+				muted,
+				audio: sharedAudioContext,
+				getCurrentFrame,
+				isPlaying,
+				isBuffering,
+				subscribeBuffering,
+				setFrame: (nextFrame) =>
+					setFrame((c) => ({...c, [config.id]: nextFrame})),
+				setMuted: () => setPlayerMuted(true),
+				onEnded: () => {
+					pause();
+					emitter.dispatchEnded();
+				},
+			}),
+		);
 	}, [
 		config,
 		loop,
@@ -360,7 +212,6 @@ export const usePlayback = ({
 		inFrame,
 		outFrame,
 		moveToBeginningWhenEnded,
-		isBackgroundedRef,
 		getCurrentFrame,
 		isBuffering,
 		isPlaying,
@@ -372,21 +223,19 @@ export const usePlayback = ({
 	]);
 
 	useEffect(() => {
-		const now = performance.now();
-		const timeSinceLastUpdate = now - lastTimeUpdateTimestamp.current;
+		return Effect.runCallback(
+			Effect.gen(function* () {
+				const now = yield* Clock.monotonicTimeNanos;
+				const elapsed =
+					Number(now - lastTimeUpdateTimestamp.current) / 1_000_000;
+				if (elapsed < 250) {
+					yield* Effect.sleep(250 - elapsed);
+				}
 
-		if (timeSinceLastUpdate >= 250) {
-			emitter.dispatchTimeUpdate({frame});
-			lastTimeUpdateTimestamp.current = now;
-			return;
-		}
-
-		const timeoutId = setTimeout(() => {
-			emitter.dispatchTimeUpdate({frame});
-			lastTimeUpdateTimestamp.current = performance.now();
-		}, 250 - timeSinceLastUpdate);
-
-		return () => clearTimeout(timeoutId);
+				emitter.dispatchTimeUpdate({frame});
+				lastTimeUpdateTimestamp.current = yield* Clock.monotonicTimeNanos;
+			}),
+		);
 	}, [emitter, frame]);
 
 	useEffect(() => {

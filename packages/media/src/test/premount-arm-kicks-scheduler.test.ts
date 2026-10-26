@@ -53,9 +53,8 @@ const parkWaiter = () => {
 	waitForTurn({
 		getPriority: () => priority,
 		fn: () => Promise.resolve('deferred'),
-		onDone: (_, triggerNext) => {
+		onDone: () => {
 			events.push('done');
-			triggerNext();
 		},
 		onError: (err) => {
 			events.push((err as Error).name);

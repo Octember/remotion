@@ -1,7 +1,9 @@
+import {Effect, PubSub} from 'effect';
+
 type Waiter = {
 	getPriority: () => number | null;
 	fn: () => Promise<unknown>;
-	onDone: (result: unknown, triggerNext: () => void) => void;
+	onDone: (result: unknown) => void;
 	onError: (err: unknown) => void;
 };
 
@@ -12,113 +14,95 @@ export class StaleWaiterError extends Error {
 	}
 }
 
-const CONCURRENCY = 1;
-
 const waiters: Waiter[] = [];
-let running = 0;
-let runningEntry: {
-	waiter: Waiter;
-	cancel: () => void;
-	settle: () => void;
-} | null = null;
+let wake: (() => void) | null = null;
+
+const drain = Effect.scoped(
+	Effect.gen(function* () {
+		const changes = yield* Effect.acquireRelease(
+			PubSub.sliding<void>(1),
+			PubSub.shutdown,
+		);
+		const subscription = yield* PubSub.subscribe(changes);
+		yield* Effect.acquireRelease(
+			Effect.sync(() => {
+				wake = () => {
+					PubSub.publishUnsafe(changes, undefined);
+				};
+			}),
+			() =>
+				Effect.sync(() => {
+					wake = null;
+				}),
+		);
+
+		while (waiters.length > 0) {
+			const priorities = waiters.map((waiter) => ({
+				waiter,
+				priority: waiter.getPriority(),
+			}));
+			const stale = priorities.filter((entry) => entry.priority === null);
+			for (const entry of stale) {
+				waiters.splice(waiters.indexOf(entry.waiter), 1);
+			}
+
+			for (const entry of stale) {
+				entry.waiter.onError(new StaleWaiterError());
+			}
+
+			const next = priorities
+				.filter(
+					(entry): entry is {waiter: Waiter; priority: number} =>
+						entry.priority !== null,
+				)
+				.sort((a, b) => a.priority - b.priority)[0];
+			if (!next) {
+				continue;
+			}
+
+			if (next.priority > 2) {
+				yield* PubSub.take(subscription);
+				continue;
+			}
+
+			waiters.splice(waiters.indexOf(next.waiter), 1);
+			yield* Effect.raceFirst(
+				Effect.tryPromise({
+					try: next.waiter.fn,
+					catch: (error) => error,
+				}).pipe(
+					Effect.match({
+						onSuccess: (value) => {
+							if (next.waiter.getPriority() !== null) {
+								next.waiter.onDone(value);
+							}
+						},
+						onFailure: (error) => {
+							if (next.waiter.getPriority() !== null) {
+								next.waiter.onError(error);
+							}
+						},
+					}),
+				),
+				Effect.gen(function* () {
+					while (next.waiter.getPriority() !== null) {
+						yield* PubSub.take(subscription);
+					}
+				}),
+			);
+		}
+	}),
+);
 
 export const processNext = (): void => {
-	if (running >= CONCURRENCY) {
-		if (runningEntry?.waiter.getPriority() === null) {
-			// Running entry went stale: free its slot so a fresh waiter can run
-			// instead of deadlocking behind work nobody needs anymore.
-			runningEntry.cancel();
-		} else {
-			return;
-		}
-	}
-
-	// Collect stale waiters first, remove them from the queue,
-	// and only then fire their onError callbacks. onError may synchronously
-	// re-enter processNext, which would otherwise shrink `waiters` from under
-	// the iteration and leave `waiters[i]` undefined on the next `i--`.
-	const staleWaiters: Waiter[] = [];
-	for (let i = waiters.length - 1; i >= 0; i--) {
-		if (waiters[i].getPriority() === null) {
-			const [stale] = waiters.splice(i, 1);
-			staleWaiters.push(stale);
-		}
-	}
-
-	for (const stale of staleWaiters) {
-		stale.onError(new StaleWaiterError());
-	}
-
-	if (waiters.length === 0) {
+	if (wake) {
+		wake();
 		return;
 	}
 
-	let bestIndex = 0;
-	let bestPriority = waiters[0].getPriority();
-	if (bestPriority === null) {
-		throw new Error('Stale waiter should have been removed');
+	if (waiters.length > 0) {
+		Effect.runPromise(drain);
 	}
-
-	for (let i = 1; i < waiters.length; i++) {
-		const priority = waiters[i].getPriority();
-		if (priority === null) {
-			throw new Error('Stale waiter should have been removed');
-		}
-
-		if (priority < bestPriority) {
-			bestPriority = priority;
-			bestIndex = i;
-		}
-	}
-
-	if (bestPriority > 2) {
-		// more than 2 seconds time, let's not do it yet!
-		return;
-	}
-
-	const [next] = waiters.splice(bestIndex, 1);
-	running++;
-
-	let settled = false;
-	let cancelled = false;
-	const entry = {
-		waiter: next,
-		cancel: () => {
-			cancelled = true;
-			entry.settle();
-		},
-		settle: () => {
-			if (settled) {
-				return;
-			}
-
-			settled = true;
-			running--;
-			if (runningEntry === entry) {
-				runningEntry = null;
-			}
-		},
-	};
-	runningEntry = entry;
-
-	next.fn().then(
-		(value) => {
-			entry.settle();
-			if (cancelled) {
-				return;
-			}
-
-			next.onDone(value, processNext);
-		},
-		(err) => {
-			entry.settle();
-			if (cancelled) {
-				return;
-			}
-
-			next.onError(err);
-		},
-	);
 };
 
 export const waitForTurn = <T>({
@@ -129,14 +113,14 @@ export const waitForTurn = <T>({
 }: {
 	getPriority: () => number | null;
 	fn: () => Promise<T>;
-	onDone: (result: T, triggerNext: () => void) => void;
+	onDone: (result: T) => void;
 	onError: (err: unknown) => void;
 }): void => {
 	waiters.push({
 		getPriority,
 		fn,
-		onDone: onDone as (result: unknown, triggerNext: () => void) => void,
-		onError: onError as (err: unknown) => void,
+		onDone: onDone as (result: unknown) => void,
+		onError,
 	});
 	processNext();
 };
