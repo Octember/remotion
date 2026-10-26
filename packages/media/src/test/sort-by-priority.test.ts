@@ -167,6 +167,42 @@ test('serializes live decodes and chooses the nearest waiting deadline', async (
 	await expect.poll(() => events).toEqual(['first', '0.5', '1']);
 });
 
+test('finishes completion callbacks before choosing the next waiting deadline', async () => {
+	const events: string[] = [];
+	let priority: number | null = 0;
+	const enqueue = (name: string, deadline: number) => {
+		waitForTurn({
+			getPriority: () => deadline,
+			fn: () => {
+				events.push(name);
+				return Promise.resolve();
+			},
+			onDone: () => undefined,
+			onError: (error) => {
+				throw error;
+			},
+		});
+	};
+
+	waitForTurn({
+		getPriority: () => priority,
+		fn: () => Promise.resolve(),
+		onDone: () => {
+			events.push('callback start');
+			priority = null;
+			enqueue('later', 1);
+			enqueue('urgent', 0);
+			events.push('callback end');
+		},
+		onError: (error) => {
+			throw error;
+		},
+	});
+	await expect
+		.poll(() => events)
+		.toEqual(['callback start', 'callback end', 'urgent', 'later']);
+});
+
 test.each(['enqueues', 'reprioritizes'])(
 	'includes work that stale cleanup %s when choosing the next deadline',
 	async (change) => {
