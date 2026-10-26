@@ -125,12 +125,30 @@ test('visibility and buffering changes cancel the pending paint without a jump',
 		frames.delete(frameId);
 	};
 
+	const paintOnce = () => {
+		const entry = frames.entries().next().value;
+		if (!entry) {
+			throw new Error('No pending paint');
+		}
+
+		frames.delete(entry[0]);
+		entry[1](0);
+	};
+
 	const f = fixture();
 	try {
 		await Effect.runPromise(
 			Effect.gen(function* () {
 				const fiber = yield* Effect.forkChild(playbackClock(f.options));
-				yield* TestClock.adjust(500);
+				yield* TestClock.adjust(50);
+				paintOnce();
+				expect(f.options.getCurrentFrame()).toBe(0);
+				expect(frames.size).toBe(1);
+				yield* TestClock.adjust(50);
+				paintOnce();
+				yield* TestClock.adjust(0);
+				expect(f.options.getCurrentFrame()).toBe(1);
+				yield* TestClock.adjust(400);
 				expect(frames.size).toBe(1);
 				Object.defineProperty(document, 'hidden', {
 					configurable: true,
