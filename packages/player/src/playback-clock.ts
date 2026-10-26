@@ -31,8 +31,11 @@ export const playbackClock = Effect.fnUntraced(
 		);
 		const nextTick = PubSub.take(yield* PubSub.subscribe(changes));
 		const changed = () => PubSub.publishUnsafe(changes, undefined);
-
-		let paint: number;
+		let paint: number | null = null;
+		const painted = () => {
+			paint = null;
+			changed();
+		};
 
 		yield* Effect.acquireRelease(
 			Effect.sync(() => {
@@ -43,7 +46,9 @@ export const playbackClock = Effect.fnUntraced(
 				Effect.sync(() => {
 					unsubscribe();
 					document.removeEventListener('visibilitychange', changed);
-					cancelAnimationFrame(paint);
+					if (paint !== null) {
+						cancelAnimationFrame(paint);
+					}
 				}),
 		);
 		const clock = yield* Clock.Clock;
@@ -93,9 +98,12 @@ export const playbackClock = Effect.fnUntraced(
 			if (document.hidden) {
 				yield* Effect.raceFirst(Effect.sleep(1000 / options.fps), nextTick);
 			} else {
-				paint = requestAnimationFrame(changed);
+				paint = requestAnimationFrame(painted);
 				yield* nextTick;
-				cancelAnimationFrame(paint);
+				if (paint !== null) {
+					cancelAnimationFrame(paint);
+					paint = null;
+				}
 			}
 
 			if (!options.isPlaying()) {
@@ -112,9 +120,10 @@ export const playbackClock = Effect.fnUntraced(
 			}
 
 			const now = clock.monotonicTimeNanosUnsafe();
+			const currentFrame = options.getCurrentFrame();
 			const {nextFrame, framesToAdvance, hasEnded} = calculateNextFrame({
 				time: Number(now - started) / 1_000_000,
-				currentFrame: options.getCurrentFrame(),
+				currentFrame,
 				playbackSpeed: options.playbackRate,
 				fps: options.fps,
 				actualFirstFrame: options.firstFrame,
@@ -124,7 +133,7 @@ export const playbackClock = Effect.fnUntraced(
 			});
 			framesAdvanced += framesToAdvance;
 			if (
-				nextFrame !== options.getCurrentFrame() &&
+				nextFrame !== currentFrame &&
 				(!hasEnded || options.moveToBeginningWhenEnded)
 			) {
 				options.setFrame(nextFrame);

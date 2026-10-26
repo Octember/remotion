@@ -136,6 +136,15 @@ test('visibility and buffering changes cancel the pending paint without a jump',
 	};
 
 	const f = fixture();
+	const {setFrame} = f.options;
+	f.options.setFrame = (next) => {
+		setFrame(next);
+		if (next === 1) {
+			f.buffer(true);
+			f.buffer(false);
+		}
+	};
+
 	try {
 		await Effect.runPromise(
 			Effect.gen(function* () {
@@ -148,6 +157,7 @@ test('visibility and buffering changes cancel the pending paint without a jump',
 				paintOnce();
 				yield* TestClock.adjust(0);
 				expect(f.options.getCurrentFrame()).toBe(1);
+				expect(frames.size).toBe(1);
 				yield* TestClock.adjust(400);
 				expect(frames.size).toBe(1);
 				Object.defineProperty(document, 'hidden', {
